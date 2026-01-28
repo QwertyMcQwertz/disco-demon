@@ -87,6 +87,21 @@ For development (with hot reload):
 npm run dev
 ```
 
+### Running as a systemd service
+
+If you run disclaude as a systemd user service, you **must** set `KillMode=process` so tmux sessions survive restarts:
+
+```bash
+# Add KillMode=process to your service file
+sed -i '/^\[Service\]/a KillMode=process' ~/.config/systemd/user/disclaude.service
+
+# Reload and restart
+systemctl --user daemon-reload
+systemctl --user restart disclaude
+```
+
+Without this, systemd kills the tmux server when disclaude restarts, destroying all sessions.
+
 ## Commands
 
 | Command | Description |
