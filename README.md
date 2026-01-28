@@ -1,8 +1,8 @@
 # Disclaude
 
-**[disclaude.com](https://disclaude.com)**
-
 A Discord bot for managing persistent Claude Code sessions. Each session gets its own channel - just type to talk to Claude.
+
+> **Note:** This is a fork of [disclaude/app](https://github.com/disclaude/app) with compatibility fixes and improvements. See [Changes from Upstream](#changes-from-upstream) for details.
 
 ## How It Works
 
@@ -17,16 +17,18 @@ A Discord bot for managing persistent Claude Code sessions. Each session gets it
 
 - **Channel per session** - Each Claude session gets its own Discord channel
 - **Just type** - No commands needed, messages go straight to Claude
-- **Live output** - Claude's responses stream to the channel in real-time (with ANSI colors)
+- **Live output** - Claude's responses stream to the channel in real-time
+- **Clean formatting** - Tool calls shown as compact summaries with emojis (⚡ Bash, 📖 Read, ✏️ Edit, etc.)
 - **Interactive prompts** - When Claude shows numbered options, clickable buttons appear
-- **Persistent** - Sessions run in tmux, survive disconnects
+- **Typing indicator** - Shows Discord typing indicator while Claude processes
+- **Persistent** - Sessions run in tmux, survive disconnects and bot restarts
 - **Auto-reconnect** - Bot automatically reconnects to existing sessions on restart
 - **Terminal access** - Attach directly via tmux whenever you want
 
 ## Prerequisites
 
 - Node.js 18+
-- tmux (`brew install tmux` on macOS)
+- tmux (`sudo dnf install tmux` on Fedora, `brew install tmux` on macOS)
 - Claude Code CLI installed and authenticated
 - A Discord server where you have permission to create channels
 
@@ -102,16 +104,33 @@ systemctl --user restart disclaude
 
 Without this, systemd kills the tmux server when disclaude restarts, destroying all sessions.
 
+Example service file (`~/.config/systemd/user/disclaude.service`):
+```ini
+[Unit]
+Description=Disclaude - Claude Code Discord Bot
+
+[Service]
+WorkingDirectory=/path/to/disclaude
+ExecStart=/usr/bin/npm start
+Restart=always
+KillMode=process
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target
+```
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `/claude new <name> [directory]` | Create a new session + channel |
-| `/claude list` | List all active sessions |
+| `/claude list` | List all active sessions with stats |
 | `/claude sync` | Reconnect orphaned tmux sessions to Discord channels |
 | `/claude end` | End the session (run in session channel) |
-| `/claude output [lines]` | Dump recent output (run in session channel) |
+| `/claude output [lines]` | Dump recent raw output (run in session channel) |
 | `/claude attach` | Get the tmux attach command |
+| `/claude stop` | Send ESC to stop Claude mid-response |
 
 ## Usage
 
@@ -148,9 +167,38 @@ Discord Channel                tmux Session
 ```
 
 Sessions are standard tmux sessions prefixed with `claude-`. The bot:
-1. Creates tmux sessions running the `claude` CLI
+1. Creates tmux sessions running the `claude` CLI with `--dangerously-skip-permissions`
 2. Sends your Discord messages to the session via `tmux send-keys`
-3. Polls for new output and streams it back to Discord
+3. Polls for new output, parses it, and streams formatted responses to Discord
+4. Persists session mappings to `~/.disclaude/sessions.json` for restart recovery
+
+## Changes from Upstream
+
+This fork includes the following improvements over [disclaude/app](https://github.com/disclaude/app):
+
+### Claude Code Compatibility
+- **v2.1.22+ support** - Uses `--dangerously-skip-permissions` flag to bypass the trust dialog
+- **Updated marker detection** - Recognizes `❯` for user input and `●` for Claude responses (changed in newer Claude Code versions)
+
+### Output Formatting
+- **Discord-native formatting** - Parses Claude's terminal output into clean, readable messages
+- **Tool call summaries** - Tool calls shown as compact lines with emojis:
+  - ⚡ Bash commands
+  - 📖 Read / ✏️ Edit / 📝 Write files
+  - 🔍 Glob/Grep searches
+  - 🤖 Task (subagent)
+  - 🌐 WebFetch / 🔎 WebSearch
+  - 📔 MCP tool calls
+- **Terminal noise removed** - Status bars, prompts, and UI hints are stripped
+- **Wide terminal** - 200-column tmux window prevents URL wrapping
+
+### User Experience
+- **Typing indicator** - Discord shows "Claude is typing..." while processing
+- **Session workspace** - Each session directory gets a `.claude/CLAUDE.md` with Discord formatting tips for Claude
+- **Session persistence** - Session-to-channel mappings saved to disk, restored on restart
+
+### Deployment
+- **systemd compatibility** - Documents `KillMode=process` requirement for service files
 
 ## Security
 
@@ -200,3 +248,8 @@ The bot creates a `#bot-logs` channel in the Claude Sessions category that logs:
 | `CATEGORY_NAME` | No | Category name for session channels (default: "Claude Sessions") |
 | `ALLOWED_USERS` | No* | Comma-separated Discord user IDs (* highly recommended) |
 | `MESSAGE_RETENTION_DAYS` | No | Auto-delete messages older than N days |
+
+## Data Storage
+
+- `~/.disclaude/sessions.json` - Persisted session-to-channel mappings
+- `<session-dir>/.claude/CLAUDE.md` - Discord formatting guide for each session
