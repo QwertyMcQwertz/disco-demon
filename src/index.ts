@@ -633,8 +633,13 @@ function startOutputPoller(sessionId: string, channel: TextChannel): void {
       const segments = parseClaudeOutput(outputForCompare);
       const formattedContent = formatForDiscord(segments);
 
-      // If no meaningful content, don't show anything yet
-      if (!formattedContent || formattedContent.length < 3) return;
+      // If no meaningful content, keep typing indicator alive while waiting
+      if (!formattedContent || formattedContent.length < 3) {
+        if (state.awaitingResponse) {
+          await channel.sendTyping();
+        }
+        return;
+      }
 
       // Update accumulated response
       state.accumulatedResponse = formattedContent;
@@ -1136,6 +1141,9 @@ client.on('messageCreate', async (message: Message) => {
   userLastMessage.set(message.author.id, now);
 
   try {
+    // Show typing indicator while Claude processes
+    await (message.channel as TextChannel).sendTyping();
+
     // Mark that we're starting a new turn - response should be a new message
     markUserInput(sessionId, message.content);
     await sessionManager.sendToSession(sessionId, message.content);
