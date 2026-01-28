@@ -16,7 +16,7 @@ import {
   ActivityType,
   MessageFlags,
 } from 'discord.js';
-import sessionManager, { setAllowedPaths, ensureSessionWorkspace } from './sessionManager.js';
+import sessionManager, { setAllowedPaths, ensureSessionWorkspace, PersistedSession } from './sessionManager.js';
 import config from './config.js';
 import { parseClaudeOutput, formatForDiscord } from './utils.js';
 
@@ -1284,6 +1284,20 @@ client.once('ready', async () => {
 
       // Set initial bot status
       updateBotStatus();
+
+      // Restore persisted sessions first (before auto-sync)
+      const restored = sessionManager.restoreSessions();
+      for (const session of restored) {
+        // Verify Discord channel still exists
+        const channel = await client.channels.fetch(session.channelId).catch(() => null);
+        if (channel && channel.type === ChannelType.GuildText) {
+          startOutputPoller(session.id, channel as TextChannel);
+          botLog('info', `Restored session: ${session.id} -> <#${session.channelId}>`);
+        }
+      }
+      if (restored.length > 0) {
+        botLog('info', `Restored ${restored.length} persisted session(s)`);
+      }
 
       const result = await syncSessions(guild);
       botLog('info', `Auto-sync: linked ${result.linked.length}, created ${result.created.length} channels`);

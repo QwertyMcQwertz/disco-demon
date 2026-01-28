@@ -1,7 +1,18 @@
 import { execSync, spawnSync } from 'child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import { resolve, join } from 'path';
+
+// Persistence file path
+const SESSIONS_FILE = join(homedir(), '.disclaude', 'sessions.json');
+
+// Interface for persisted session data
+export interface PersistedSession {
+  id: string;
+  channelId: string;
+  directory: string;
+  tmuxName: string;
+}
 
 /**
  * Default CLAUDE.md content for Discord-friendly formatting
@@ -181,6 +192,9 @@ class SessionManager {
       this.channelMap.set(sessionId, channelId);
       this.reverseMap.set(channelId, sessionId);
 
+      // Persist to disk
+      this.saveSessionsToFile();
+
       return {
         id: sessionId,
         directory: resolvedDir,
@@ -213,6 +227,7 @@ class SessionManager {
   linkChannel(sessionId: string, channelId: string): void {
     this.channelMap.set(sessionId, channelId);
     this.reverseMap.set(channelId, sessionId);
+    this.saveSessionsToFile();
   }
 
   /**
@@ -385,6 +400,9 @@ class SessionManager {
       this.channelMap.delete(sessionId);
       this.lastOutput.delete(sessionId);
 
+      // Persist changes to disk
+      this.saveSessionsToFile();
+
       return true;
     } catch (error) {
       throw new Error(`Failed to kill session: ${(error as Error).message}`);
@@ -432,7 +450,72 @@ class SessionManager {
     if (sessionId) {
       this.channelMap.delete(sessionId);
       this.reverseMap.delete(channelId);
+      this.saveSessionsToFile();
     }
+  }
+
+  /**
+   * Save current session state to disk
+   */
+  private saveSessionsToFile(): void {
+    const sessions: PersistedSession[] = [];
+    for (const [sessionId, channelId] of this.channelMap.entries()) {
+      const info = this.getSession(sessionId);
+      if (info) {
+        sessions.push({
+          id: sessionId,
+          channelId,
+          directory: info.directory,
+          tmuxName: info.tmuxName,
+        });
+      }
+    }
+
+    // Ensure directory exists
+    const dir = join(homedir(), '.disclaude');
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+
+    try {
+      writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
+    } catch (e) {
+      console.error('Failed to save sessions file:', e);
+    }
+  }
+
+  /**
+   * Load sessions from disk
+   */
+  private loadSessionsFromFile(): PersistedSession[] {
+    try {
+      if (existsSync(SESSIONS_FILE)) {
+        return JSON.parse(readFileSync(SESSIONS_FILE, 'utf-8'));
+      }
+    } catch (e) {
+      console.error('Failed to load sessions file:', e);
+    }
+    return [];
+  }
+
+  /**
+   * Restore sessions from disk on startup
+   * Returns list of restored sessions for caller to start pollers
+   */
+  restoreSessions(): PersistedSession[] {
+    const saved = this.loadSessionsFromFile();
+    const restored: PersistedSession[] = [];
+
+    for (const session of saved) {
+      // Verify tmux session still exists
+      if (this.sessionExists(session.id)) {
+        this.channelMap.set(session.id, session.channelId);
+        this.reverseMap.set(session.channelId, session.id);
+        restored.push(session);
+      }
+    }
+
+    return restored;
   }
 }
 
