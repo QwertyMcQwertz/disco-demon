@@ -21,6 +21,7 @@ A Discord bot for managing persistent Claude Code sessions. Each session gets it
 - **Live output** - Claude's responses stream to the channel in real-time
 - **Clean formatting** - Tool calls shown as compact summaries with emojis (⚡ Bash, 📖 Read, ✏️ Edit, etc.)
 - **Stop button** - Click to interrupt Claude mid-response
+- **Customizable instructions** - Edit `config/session-claude.md` to customize Claude's behavior across all sessions
 - **Typing indicator** - Shows Discord typing indicator while Claude processes
 - **Persistent** - Sessions run in tmux, survive disconnects and bot restarts
 - **Auto-reconnect** - Bot automatically reconnects to existing sessions on restart
@@ -221,8 +222,21 @@ The bot creates a `#bot-logs` channel in the Claude Sessions category that logs:
 ## Data Storage
 
 - `~/.disclaude/sessions.json` - Persisted session-to-channel mappings
-- `<session-dir>/.claude/CLAUDE.md` - Discord formatting guide for each session
+- `<session-dir>/.claude/CLAUDE.md` - Discord formatting guide for each session (from template)
 - `<session-dir>/.disclaude-images/` - Downloaded image attachments from Discord
+
+## Customization
+
+The file `config/session-claude.md` is a template that gets copied to each session's `.claude/CLAUDE.md`. Edit it to customize Claude's behavior across all your sessions.
+
+The template includes:
+- Discord formatting rules (what works, what doesn't)
+- Instructions for asking questions (as numbered lists, not interactive prompts)
+- Message length guidelines
+
+HTML comments (`<!-- ... -->`) in the template are stripped when copying - use them to document your customizations.
+
+**Note:** Changes only apply to new sessions. Existing sessions keep their current `.claude/CLAUDE.md` (to preserve any manual edits).
 
 ## Troubleshooting
 
