@@ -17,6 +17,7 @@ A Discord bot for managing persistent Claude Code sessions. Each session gets it
 
 - **Channel per session** - Each Claude session gets its own Discord channel
 - **Just type** - No commands needed, messages go straight to Claude
+- **Image support** - Send images and Claude can analyze them
 - **Live output** - Claude's responses stream to the channel in real-time
 - **Clean formatting** - Tool calls shown as compact summaries with emojis (⚡ Bash, 📖 Read, ✏️ Edit, etc.)
 - **Interactive prompts** - When Claude shows numbered options, clickable buttons appear
@@ -221,6 +222,7 @@ The bot creates a `#bot-logs` channel in the Claude Sessions category that logs:
 
 - `~/.disclaude/sessions.json` - Persisted session-to-channel mappings
 - `<session-dir>/.claude/CLAUDE.md` - Discord formatting guide for each session
+- `<session-dir>/.disclaude-images/` - Downloaded image attachments from Discord
 
 ## Troubleshooting
 
@@ -263,6 +265,7 @@ This fork includes the following improvements over [disclaude/app](https://githu
 - **Wide terminal** - 200-column tmux window prevents URL wrapping
 
 ### User Experience
+- **Image support** - Send images in Discord; they're downloaded locally and Claude can analyze them
 - **Typing indicator** - Discord shows "Claude is typing..." while processing
 - **Session workspace** - Each session directory gets a `.claude/CLAUDE.md` with Discord formatting tips for Claude
 - **Session persistence** - Session-to-channel mappings saved to disk, restored on restart
