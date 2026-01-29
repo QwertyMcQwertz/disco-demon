@@ -7,11 +7,11 @@ A Discord bot for managing persistent Claude Code sessions. Each session gets it
 ## How It Works
 
 1. Create a session with `/claude new myproject /path/to/project`
-2. A new channel `#claude-myproject` is created in the "Claude Sessions" category
+2. A new channel `#myproject` is created in the "Claude Sessions" category
 3. Just type in that channel - your messages go directly to Claude
 4. Claude's output streams back to the channel automatically
 5. Scroll up to see the full conversation history
-6. Drop into the terminal anytime with `tmux attach -t claude-myproject`
+6. Drop into the terminal anytime with `/claude attach` to get the tmux command
 
 ## Features
 
@@ -128,7 +128,7 @@ WantedBy=default.target
 ```
 /claude new api-server ~/Dev/my-api
 ```
-→ Creates `#claude-api-server` channel
+→ Creates `#api-server` channel
 
 **In the channel:**
 ```
@@ -137,10 +137,7 @@ Help me add rate limiting to the /users endpoint
 → Message goes to Claude, response streams back
 
 **In Terminal:**
-```bash
-tmux attach -t claude-api-server
-```
-→ Full terminal access to the same session
+Use `/claude attach` in the channel to get the tmux attach command, then run it in your terminal for full access to the session.
 
 ## Architecture
 
@@ -156,11 +153,11 @@ Discord Channel                tmux Session
   Channel                           │
 ```
 
-Sessions are standard tmux sessions prefixed with `claude-`. The bot:
+Sessions are tmux sessions with convention-based naming (`disco_{guildId}_{channelId}`). The bot:
 1. Creates tmux sessions running `claude --dangerously-skip-permissions`
 2. Sends your Discord messages to the session via `tmux send-keys`
 3. Polls for new output, parses it, and streams formatted responses to Discord
-4. Persists session mappings to `~/.disclaude/sessions.json` for restart recovery
+4. On restart, reconnects by querying tmux for existing sessions (no state file needed)
 
 ## Security
 
@@ -221,7 +218,6 @@ The bot creates a `#bot-logs` channel in the Claude Sessions category that logs:
 
 ## Data Storage
 
-- `~/.disclaude/sessions.json` - Persisted session-to-channel mappings
 - `<session-dir>/.claude/CLAUDE.md` - Discord formatting guide for each session (from template)
 - `<session-dir>/.disclaude-images/` - Downloaded image attachments from Discord
 
@@ -256,7 +252,7 @@ Add `KillMode=process` to your systemd service file. See [Running as a systemd S
 Add the directory to `ALLOWED_PATHS` in your `.env` file.
 
 ### Claude not responding in tmux
-Attach to the session (`tmux attach -t claude-<name>`) and check for errors. The Claude CLI may need re-authentication.
+Use `/claude attach` to get the tmux command, then attach and check for errors. The Claude CLI may need re-authentication.
 
 ## Changes from Upstream
 
@@ -282,7 +278,7 @@ This fork includes the following improvements over [disclaude/app](https://githu
 - **Image support** - Send images in Discord; they're downloaded locally and Claude can analyze them
 - **Typing indicator** - Discord shows "Claude is typing..." while processing
 - **Session workspace** - Each session directory gets a `.claude/CLAUDE.md` with Discord formatting tips for Claude
-- **Session persistence** - Session-to-channel mappings saved to disk, restored on restart
+- **Stateless reconnection** - Convention-based tmux naming eliminates need for state files
 
 ### Deployment
 - **systemd compatibility** - Documents `KillMode=process` requirement for service files
