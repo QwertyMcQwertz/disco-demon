@@ -101,19 +101,28 @@ npm run dev         # Development (hot reload)
 
 Then in Discord: `/claude new myproject ~/code/myproject`
 
-### Running as a systemd Service
+### Running as a Service
 
-If you use systemd, you **must** set `KillMode=process` or tmux sessions die when the bot restarts:
+Running Disco Demon as a service ensures it:
+- **Starts automatically** when your machine boots
+- **Restarts on crash** without manual intervention
+- **Keeps tmux sessions alive** across bot restarts
+
+#### systemd (Linux)
+
+Create a user service file:
 
 ```ini
 # ~/.config/systemd/user/discod.service
 [Unit]
 Description=Disco Demon
+After=network.target
 
 [Service]
 WorkingDirectory=/path/to/disco-demon
 ExecStart=/usr/bin/npm start
 Restart=always
+RestartSec=10
 KillMode=process
 Environment=NODE_ENV=production
 
@@ -121,10 +130,29 @@ Environment=NODE_ENV=production
 WantedBy=default.target
 ```
 
+Enable and start it:
+
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now discod
 ```
+
+**Important:** `KillMode=process` is required. Without it, systemd's default behavior (`control-group`) kills all child processes when the service restarts—including your tmux sessions. With `KillMode=process`, only the Node.js process is killed, leaving tmux sessions intact for the bot to reconnect to.
+
+#### pm2 (Cross-platform)
+
+[pm2](https://pm2.keymetrics.io/docs/usage/quick-start/) is a Node.js process manager that works on Linux, macOS, and Windows.
+
+```bash
+npm install -g pm2
+pm2 start npm --name discod -- start
+pm2 save
+pm2 startup  # Follow the instructions to enable boot persistence
+```
+
+#### launchd (macOS)
+
+For native macOS service management, see Apple's [launchd documentation](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html) or use [LaunchControl](https://www.soma-zone.com/LaunchControl/) for a GUI.
 
 ## Commands
 
@@ -237,9 +265,9 @@ Install tmux: [github.com/tmux/tmux/wiki/Installing](https://github.com/tmux/tmu
 3. Check `#disco-logs` for errors
 4. Is the tmux session alive? (`tmux list-sessions`)
 
-### Session lost after restart
+### Session lost after restart (systemd)
 
-Add `KillMode=process` to your systemd service. Without it, systemd kills tmux when the bot restarts.
+Add `KillMode=process` to your systemd service. See [Running as a Service](#running-as-a-service) for details.
 
 ### Claude not responding in terminal
 
