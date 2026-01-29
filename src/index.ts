@@ -732,7 +732,7 @@ client.on('interactionCreate', async (interaction) => {
 
         // Create Discord channel with friendly name
         const channel = await interaction.guild!.channels.create({
-          name: `claude-${cleanName}`,
+          name: cleanName,
           type: ChannelType.GuildText,
           parent: category.id,
         });
