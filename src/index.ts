@@ -208,8 +208,8 @@ function markUserInput(sessionId: string, userMessage: string): void {
 // Define slash commands
 const commands = [
   new SlashCommandBuilder()
-    .setName('claude')
-    .setDescription('Manage Claude Code sessions')
+    .setName('disco')
+    .setDescription('Manage Disco Demon sessions')
     .addSubcommand((sub) =>
       sub
         .setName('new')
@@ -709,7 +709,7 @@ function stopOutputPoller(sessionId: string): void {
 // Handle slash commands
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== 'claude') return;
+  if (interaction.commandName !== 'disco') return;
 
   // Check user whitelist
   if (!isUserAllowed(interaction.user.id)) {

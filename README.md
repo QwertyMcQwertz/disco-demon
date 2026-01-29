@@ -43,7 +43,7 @@ Still here? See [Locking It Down](#locking-it-down) for how to reduce the blast 
 
 - **[Node.js 18+](https://nodejs.org/en/download)**
 - **[tmux](https://github.com/tmux/tmux/wiki/Installing)**
-- **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)** - installed and authenticated (`claude --version`)
+- **[Claude Code CLI](https://docs.anthropic.com/en/docs/disco-code)** - installed and authenticated (`claude --version`)
 - **[Discord server](https://support.discord.com/hc/en-us/articles/204849977-How-do-I-create-a-server)** - where you have Manage Channels permission
 
 ### 1. Clone the repo
@@ -99,7 +99,7 @@ npm start           # Production
 npm run dev         # Development (hot reload)
 ```
 
-Then in Discord: `/claude new myproject ~/code/myproject`
+Then in Discord: `/disco new myproject ~/code/myproject`
 
 ### Running as a Service
 
@@ -158,19 +158,19 @@ For native macOS service management, see Apple's [launchd documentation](https:/
 
 | Command | Description |
 |---------|-------------|
-| `/claude new <name> [directory]` | Create a new session + channel |
-| `/claude list` | List all active sessions |
-| `/claude sync` | Reconnect orphaned tmux sessions |
-| `/claude end` | End the current session |
-| `/claude attach` | Get the tmux attach command |
-| `/claude output [lines]` | Dump recent raw terminal output |
-| `/claude stop` | Send ESC to interrupt Claude |
+| `/disco new <name> [directory]` | Create a new session + channel |
+| `/disco list` | List all active sessions |
+| `/disco sync` | Reconnect orphaned tmux sessions |
+| `/disco end` | End the current session |
+| `/disco attach` | Get the tmux attach command |
+| `/disco output [lines]` | Dump recent raw terminal output |
+| `/disco stop` | Send ESC to interrupt Claude |
 
 ## Usage Examples
 
 **Create a session:**
 ```
-/claude new api-server ~/code/my-api
+/disco new api-server ~/code/my-api
 ```
 → Creates `#api-server` channel in the "Disco Demon" category
 
@@ -182,7 +182,7 @@ Help me add rate limiting to the /users endpoint
 
 **Attach to the terminal:**
 ```
-/claude attach
+/disco attach
 ```
 → Copy the `tmux attach -t disco_...` command, paste in your terminal
 
@@ -261,7 +261,7 @@ Install tmux: [github.com/tmux/tmux/wiki/Installing](https://github.com/tmux/tmu
 ### Bot not responding
 
 1. Is the user in `ALLOWED_USERS`?
-2. Does the channel have an active session? (`/claude list`)
+2. Does the channel have an active session? (`/disco list`)
 3. Check `#disco-logs` for errors
 4. Is the tmux session alive? (`tmux list-sessions`)
 
