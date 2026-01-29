@@ -37,38 +37,6 @@ Still here? See [Locking It Down](#locking-it-down) for how to reduce the blast 
 - 🔗 **Auto-reconnect** - Bot finds existing sessions on startup
 - 🖥️ **Terminal access** - Drop into tmux whenever you want full control
 
-## Quick Start
-
-```bash
-git clone https://github.com/QwertyMcQwertz/disco-demon.git
-cd disco-demon
-cp .env.example .env  # Edit with your Discord credentials
-npm install
-npm start
-```
-
-Then in Discord: `/claude new myproject ~/code/myproject`
-
-## How It Works
-
-```
-You (Discord)              Disco Demon                tmux + Claude
-     │                          │                          │
-     │  "add rate limiting"     │                          │
-     └─────────────────────────►│  tmux send-keys ────────►│
-                                │                          │ Claude thinks...
-                                │◄──── capture-pane ───────│ Claude responds
-     │◄─────────────────────────│                          │
-     │  [formatted response]    │                          │
-```
-
-1. You type in a session channel
-2. Disco Demon sends your message to a tmux session running `claude`
-3. Disco Demon polls the tmux pane for new output
-4. Output is parsed, formatted, and streamed back to Discord
-
-Sessions are named `disco_{guildId}_{channelId}` - the bot finds them by querying tmux directly (no state file needed).
-
 ## Installation
 
 ### Prerequisites
@@ -78,29 +46,41 @@ Sessions are named `disco_{guildId}_{channelId}` - the bot finds them by queryin
 - **Claude Code CLI** - installed and authenticated (`claude --version`)
 - **Discord server** - where you have Manage Channels permission
 
-### Discord Bot Setup
+### 1. Clone the repo
+
+```bash
+git clone https://github.com/QwertyMcQwertz/disco-demon.git
+cd disco-demon
+npm install
+```
+
+### 2. Create a Discord bot
 
 1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
-2. Click **New Application** → name it "Disco Demon" or whatever
-3. Go to **Bot** → **Reset Token** → copy it (you'll need this)
+2. Click **New Application** → name it whatever you want
+3. Go to **Bot** → **Reset Token** → copy the token
 4. Enable **Message Content Intent** under Privileged Gateway Intents
 5. Go to **OAuth2 → URL Generator**:
    - Scopes: `bot`, `applications.commands`
    - Bot Permissions: `Send Messages`, `Manage Channels`, `Embed Links`, `Add Reactions`, `Read Message History`
 6. Open the generated URL → invite the bot to your server
 
-### Configuration
+### 3. Configure
 
-Create a `.env` file:
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your values:
 
 ```bash
 # Required
 DISCORD_TOKEN=your_bot_token
-DISCORD_CLIENT_ID=your_application_id
-DISCORD_GUILD_ID=your_server_id
+DISCORD_CLIENT_ID=your_application_id      # From Developer Portal → General Information
+DISCORD_GUILD_ID=your_server_id            # Right-click server → Copy Server ID
 
 # Security (see "Locking It Down")
-ALLOWED_USERS=your_discord_user_id
+ALLOWED_USERS=your_discord_user_id         # Right-click yourself → Copy User ID
 ALLOWED_PATHS=~/projects,~/work
 
 # Optional
@@ -110,12 +90,14 @@ MESSAGE_RETENTION_DAYS=7
 RATE_LIMIT_MS=1000
 ```
 
-### Running
+### 4. Run
 
 ```bash
 npm start           # Production
 npm run dev         # Development (hot reload)
 ```
+
+Then in Discord: `/claude new myproject ~/code/myproject`
 
 ### Running as a systemd Service
 
@@ -173,6 +155,26 @@ Help me add rate limiting to the /users endpoint
 /claude attach
 ```
 → Copy the `tmux attach -t disco_...` command, paste in your terminal
+
+## How It Works
+
+```
+You (Discord)              Disco Demon                tmux + Claude
+     │                          │                          │
+     │  "add rate limiting"     │                          │
+     └─────────────────────────►│  tmux send-keys ────────►│
+                                │                          │ Claude thinks...
+                                │◄──── capture-pane ───────│ Claude responds
+     │◄─────────────────────────│                          │
+     │  [formatted response]    │                          │
+```
+
+1. You type in a session channel
+2. Disco Demon sends your message to a tmux session running `claude`
+3. Disco Demon polls the tmux pane for new output
+4. Output is parsed, formatted, and streamed back to Discord
+
+Sessions are named `disco_{guildId}_{channelId}` - the bot finds them by querying tmux directly (no state file needed).
 
 ## Locking It Down
 
