@@ -3,11 +3,6 @@
  * Extracted for testability
  */
 
-export interface PromptOption {
-  number: string;
-  label: string;
-}
-
 /**
  * Format uptime as human-readable string
  */
@@ -52,42 +47,6 @@ export function detectFileEdits(text: string): string[] {
     }
   }
   return files;
-}
-
-/**
- * Detect interactive prompts and extract numbered options
- * Only triggers on actual selection prompts at the END of output
- */
-export function detectPrompt(text: string): PromptOption[] | null {
-  const lines = text.split('\n');
-
-  // Only look at the last 15 lines where an active prompt would be
-  const recentLines = lines.slice(-15);
-
-  // Look for the selection indicator (❯) which indicates an active prompt
-  const selectorLineIdx = recentLines.findIndex(line => line.includes('❯'));
-  if (selectorLineIdx === -1) return null;
-
-  // Extract options starting from around the selector
-  const options: PromptOption[] = [];
-
-  // Look for numbered options near the selector (within a few lines)
-  for (let i = Math.max(0, selectorLineIdx - 2); i < recentLines.length; i++) {
-    const line = recentLines[i];
-    // Match lines like "❯ 1. Yes" or "  2. No" or "   3. Something"
-    const match = line.match(/^[\s]*[❯]?\s*(\d+)\.\s+(.+)$/);
-    if (match) {
-      const label = match[2].trim()
-        .replace(/\s*\([^)]*\)\s*$/, '')  // Remove trailing parenthetical like "(shift+tab)"
-        .slice(0, 60);
-      options.push({
-        number: match[1],
-        label: label,
-      });
-    }
-  }
-
-  return options.length >= 2 ? options : null;
 }
 
 /**

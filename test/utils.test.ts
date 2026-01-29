@@ -3,7 +3,6 @@ import {
   formatUptime,
   formatLastActivity,
   detectFileEdits,
-  detectPrompt,
   cleanForCompare,
   cleanForDisplay,
   convertAnsiForDiscord,
@@ -110,62 +109,6 @@ describe('detectFileEdits', () => {
   it('should handle single quotes', () => {
     const text = "Edit('src/file.ts', 'old', 'new')";
     expect(detectFileEdits(text)).toEqual(['src/file.ts']);
-  });
-});
-
-describe('detectPrompt', () => {
-  it('should detect numbered prompts with selector', () => {
-    const text = `
-Some output here
-❯ 1. Yes
-  2. No
-  3. Cancel
-    `;
-    const result = detectPrompt(text);
-    expect(result).toEqual([
-      { number: '1', label: 'Yes' },
-      { number: '2', label: 'No' },
-      { number: '3', label: 'Cancel' },
-    ]);
-  });
-
-  it('should remove trailing parentheticals', () => {
-    const text = `
-❯ 1. Accept (enter)
-  2. Reject (shift+tab)
-    `;
-    const result = detectPrompt(text);
-    expect(result).toEqual([
-      { number: '1', label: 'Accept' },
-      { number: '2', label: 'Reject' },
-    ]);
-  });
-
-  it('should return null without selector', () => {
-    const text = `
-1. Yes
-2. No
-    `;
-    expect(detectPrompt(text)).toBeNull();
-  });
-
-  it('should return null with less than 2 options', () => {
-    const text = `
-❯ 1. Only one option
-    `;
-    expect(detectPrompt(text)).toBeNull();
-  });
-
-  it('should only look at last 15 lines', () => {
-    const lines = Array(20).fill('unrelated line');
-    lines.push('❯ 1. Yes');
-    lines.push('  2. No');
-    const text = lines.join('\n');
-    const result = detectPrompt(text);
-    expect(result).toEqual([
-      { number: '1', label: 'Yes' },
-      { number: '2', label: 'No' },
-    ]);
   });
 });
 

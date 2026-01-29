@@ -1,7 +1,13 @@
 import { execSync, spawnSync } from 'child_process';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { homedir } from 'os';
-import { resolve, join } from 'path';
+import { resolve, join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+// Get template path relative to this file
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const TEMPLATE_PATH = join(__dirname, '..', 'config', 'session-claude.md');
 
 // Persistence file path
 const SESSIONS_FILE = join(homedir(), '.disclaude', 'sessions.json');
@@ -15,43 +21,18 @@ export interface PersistedSession {
 }
 
 /**
- * Default CLAUDE.md content for Discord-friendly formatting
+ * Read session CLAUDE.md template and strip HTML comments
  */
-const CLAUDE_MD_CONTENT = `# Discord Bot Session
-
-Your output is being relayed to Discord. Markdown rendering is limited.
-
-## What Works
-- Bullet points with \`-\`
-- Numbered lists
-- Inline \`code\`
-- Unicode formatting for emphasis:
-  - 𝗯𝗼𝗹𝗱 (Mathematical Sans-Serif Bold)
-  - 𝘪𝘵𝘢𝘭𝘪𝘤 (Mathematical Sans-Serif Italic)
-  - 𝙗𝙤𝙡𝙙 𝙞𝙩𝙖𝙡𝙞𝙘 (Mathematical Sans-Serif Bold Italic)
-  - u̲n̲d̲e̲r̲l̲i̲n̲e̲ (combining underline characters)
-
-## What Does NOT Work
-- **Tables** - pipe tables break completely, avoid them
-- Standard markdown bold (\`**text**\`)
-- Standard markdown italic (\`*text*\`)
-- Code blocks with triple backticks
-
-## Instead of Tables
-Use bullet lists:
-- Server: laptop | IP: 100.91.125.103 | Role: App server
-- Server: sv1 | IP: 100.84.12.60 | Role: DNS
-
-Or structured lists:
-- 𝗹𝗮𝗽𝘁𝗼𝗽
-  - IP: 100.91.125.103
-  - Role: App server
-
-## Keep It Concise
-- Discord has a 2000 character limit per message
-- Prefer bullet points over paragraphs
-- Keep output under ~80 chars wide when possible
-`;
+function getSessionTemplate(): string {
+  try {
+    const template = readFileSync(TEMPLATE_PATH, 'utf-8');
+    // Strip HTML comments (<!-- ... -->) and clean up excess newlines
+    return template.replace(/<!--[\s\S]*?-->/g, '').replace(/\n{3,}/g, '\n\n').trim();
+  } catch (err) {
+    console.error('Failed to read session template:', err);
+    return '# Discord Bot Session\n\nYour output is being relayed to Discord.';
+  }
+}
 
 /**
  * Ensure the session workspace directory exists with a CLAUDE.md file
@@ -77,7 +58,7 @@ export function ensureSessionWorkspace(dir: string): void {
   // Create CLAUDE.md only if it doesn't exist (preserve user edits)
   const claudeMdPath = join(claudeDir, 'CLAUDE.md');
   if (!existsSync(claudeMdPath)) {
-    writeFileSync(claudeMdPath, CLAUDE_MD_CONTENT, 'utf-8');
+    writeFileSync(claudeMdPath, getSessionTemplate(), 'utf-8');
     console.log(`Created Discord formatting guide: ${claudeMdPath}`);
   }
 }

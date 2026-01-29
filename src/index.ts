@@ -362,45 +362,6 @@ async function syncSessions(guild: Guild): Promise<{ linked: string[]; created: 
   return { linked, created };
 }
 
-// Detect interactive prompts and extract options
-// Only triggers on actual selection prompts at the END of output
-interface PromptOption {
-  number: string;
-  label: string;
-}
-
-function detectPrompt(text: string): PromptOption[] | null {
-  const lines = text.split('\n');
-
-  // Only look at the last 15 lines where an active prompt would be
-  const recentLines = lines.slice(-15);
-
-  // Look for the selection indicator (❯) which indicates an active prompt
-  const selectorLineIdx = recentLines.findIndex(line => line.includes('❯'));
-  if (selectorLineIdx === -1) return null;
-
-  // Extract options starting from around the selector
-  const options: PromptOption[] = [];
-
-  // Look for numbered options near the selector (within a few lines)
-  for (let i = Math.max(0, selectorLineIdx - 2); i < recentLines.length; i++) {
-    const line = recentLines[i];
-    // Match lines like "❯ 1. Yes" or "  2. No" or "   3. Something"
-    const match = line.match(/^[\s]*[❯]?\s*(\d+)\.\s+(.+)$/);
-    if (match) {
-      const label = match[2].trim()
-        .replace(/\s*\([^)]*\)\s*$/, '')  // Remove trailing parenthetical like "(shift+tab)"
-        .slice(0, 60);
-      options.push({
-        number: match[1],
-        label: label,
-      });
-    }
-  }
-
-  return options.length >= 2 ? options : null;
-}
-
 // Clean for comparison (strip ANSI)
 function cleanForCompare(text: string): string {
   return text
@@ -676,9 +637,6 @@ function startOutputPoller(sessionId: string, channel: TextChannel): void {
       // Use the formatted content directly (plain text for Discord)
       const fullDisplayContent = state.accumulatedResponse;
 
-      // Check for prompts in current output (use version without ANSI)
-      const promptOptions = detectPrompt(outputForCompare);
-
       // Discord message limit is 2000 chars
       const maxMessageLength = 1950;
 
@@ -730,30 +688,13 @@ function startOutputPoller(sessionId: string, channel: TextChannel): void {
         messageContent = displayContent;
       }
 
-      // Build buttons - always include Stop button, plus prompt options if active
+      // Build stop button
       const stopButton = new ButtonBuilder()
         .setCustomId(`stop_${sessionId}`)
         .setLabel('⏹ Stop')
         .setStyle(ButtonStyle.Danger);
 
-      let components: ActionRowBuilder<ButtonBuilder>[] = [];
-      if (promptOptions && promptOptions.length > 0) {
-        const promptRow = new ActionRowBuilder<ButtonBuilder>();
-        for (const opt of promptOptions.slice(0, 4)) {  // Max 4 to leave room for stop
-          promptRow.addComponents(
-            new ButtonBuilder()
-              .setCustomId(`prompt_${sessionId}_${opt.number}`)
-              .setLabel(`${opt.number}. ${opt.label}`.slice(0, 80))
-              .setStyle(ButtonStyle.Primary)
-          );
-        }
-        promptRow.addComponents(stopButton);
-        components = [promptRow];
-      } else {
-        // Just the stop button
-        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(stopButton);
-        components = [row];
-      }
+      const components = [new ActionRowBuilder<ButtonBuilder>().addComponents(stopButton)];
 
       try {
         // If we have a response message for this turn, edit it
@@ -1104,30 +1045,6 @@ client.on('interactionCreate', async (interaction) => {
       }
     }
     return;
-  }
-
-  if (type !== 'prompt') return;
-
-  try {
-    await sessionManager.sendToSession(sessionId, choice);
-
-    await interaction.update({
-      components: [
-        new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder()
-            .setCustomId('selected')
-            .setLabel(`Selected: ${choice}`)
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(true)
-        ),
-      ],
-    });
-  } catch (error) {
-    botLog('error', `Button error: ${(error as Error).message}`);
-    await interaction.reply({
-      content: `Failed to send choice: ${(error as Error).message}`,
-      ephemeral: true,
-    });
   }
 });
 

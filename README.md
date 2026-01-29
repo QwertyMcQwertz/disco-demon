@@ -20,7 +20,7 @@ A Discord bot for managing persistent Claude Code sessions. Each session gets it
 - **Image support** - Send images and Claude can analyze them
 - **Live output** - Claude's responses stream to the channel in real-time
 - **Clean formatting** - Tool calls shown as compact summaries with emojis (⚡ Bash, 📖 Read, ✏️ Edit, etc.)
-- **Interactive prompts** - When Claude shows numbered options, clickable buttons appear
+- **Stop button** - Click to interrupt Claude mid-response
 - **Typing indicator** - Shows Discord typing indicator while Claude processes
 - **Persistent** - Sessions run in tmux, survive disconnects and bot restarts
 - **Auto-reconnect** - Bot automatically reconnects to existing sessions on restart
