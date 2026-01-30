@@ -296,4 +296,16 @@ Add the directory to `ALLOWED_PATHS` in your `.env`.
 
 ---
 
+## Star History
+
+<a href="https://www.star-history.com/#QwertyMcQwertz/disco-demon&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=QwertyMcQwertz/disco-demon&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=QwertyMcQwertz/disco-demon&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=QwertyMcQwertz/disco-demon&type=date&legend=top-left" />
+ </picture>
+</a>
+
+---
+
 *Originally inspired by [disclaude](https://github.com/disclaude/app)*
