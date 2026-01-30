@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="disco-demon.jpg" width="200" alt="Disco Demon logo">
+</p>
+
 # 🪩 Disco Demon 😈
 
 Discord + Claude Code Daemon.
