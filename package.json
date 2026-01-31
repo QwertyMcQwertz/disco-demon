@@ -1,6 +1,6 @@
 {
   "name": "discod",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -12,7 +12,13 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
-  "keywords": ["discord", "claude", "ai", "bot", "tmux"],
+  "keywords": [
+    "discord",
+    "claude",
+    "ai",
+    "bot",
+    "tmux"
+  ],
   "author": "QwertyMcQwertz",
   "license": "MIT",
   "description": "Disco Demon - Discord bot for persistent Claude Code sessions",
@@ -21,10 +27,12 @@
     "url": "git+https://github.com/QwertyMcQwertz/disco-demon.git"
   },
   "dependencies": {
+    "adm-zip": "^0.5.16",
     "discord.js": "^14.25.1",
     "dotenv": "^17.2.3"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
     "@types/node": "^24.10.1",
     "@vitest/coverage-v8": "^4.0.14",
     "tsx": "^4.20.6",

@@ -1,44 +1,73 @@
 import { execSync, spawnSync } from 'child_process';
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { homedir } from 'os';
 import { resolve, join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-// Get template path relative to this file
+// Get template paths relative to this file
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const TEMPLATE_PATH = join(__dirname, '..', 'config', 'session-claude.md');
+const PARENT_TEMPLATE_PATH = join(__dirname, '..', 'config', 'parent-claude.md');
+const CHANNEL_TEMPLATE_PATH = join(__dirname, '..', 'config', 'channel-claude.md');
 
 // Session prefix - tmux sessions are named disco_{guildId}_{channelId}
 const SESSION_PREFIX = 'disco_';
 
 /**
- * Read session CLAUDE.md template and strip HTML comments
+ * Expand ~ to home directory
  */
-function getSessionTemplate(): string {
+function expandPath(path: string): string {
+  return path.startsWith('~') ? path.replace('~', homedir()) : path;
+}
+
+/**
+ * Strip HTML comments and clean up template
+ */
+function cleanTemplate(content: string): string {
+  return content.replace(/<!--[\s\S]*?-->/g, '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * Read parent CLAUDE.md template (Discord formatting rules - inherited by all channels)
+ */
+function getParentTemplate(): string {
   try {
-    const template = readFileSync(TEMPLATE_PATH, 'utf-8');
-    // Strip HTML comments (<!-- ... -->) and clean up excess newlines
-    return template.replace(/<!--[\s\S]*?-->/g, '').replace(/\n{3,}/g, '\n\n').trim();
+    const template = readFileSync(PARENT_TEMPLATE_PATH, 'utf-8');
+    return cleanTemplate(template);
   } catch (err) {
-    console.error('Failed to read session template:', err);
-    return '# Discord Bot Session\n\nYour output is being relayed to Discord.';
+    console.error('Failed to read parent template:', err);
+    return '# Disco Demon - Discord Environment\n\nYour output is being relayed to Discord.';
   }
 }
 
 /**
- * Ensure the session workspace directory exists with a CLAUDE.md file
+ * Read channel CLAUDE.md template with placeholder substitution
+ */
+function getChannelTemplate(channelName: string, channelDir: string, parentDir: string): string {
+  try {
+    const template = readFileSync(CHANNEL_TEMPLATE_PATH, 'utf-8');
+    return cleanTemplate(template)
+      .replace(/\{\{CHANNEL_NAME\}\}/g, channelName)
+      .replace(/\{\{CHANNEL_DIR\}\}/g, channelDir)
+      .replace(/\{\{PARENT_DIR\}\}/g, parentDir);
+  } catch (err) {
+    console.error('Failed to read channel template:', err);
+    return `# Channel Agent - ${channelName}\n\nYou are the Claude agent for "${channelName}".`;
+  }
+}
+
+/**
+ * Ensure the parent workspace directory exists with Discord formatting CLAUDE.md
+ * This is the sessions/ directory that all channel subdirectories live under.
  * Only creates files if they don't exist (preserves user customizations)
  */
-export function ensureSessionWorkspace(dir: string): void {
-  // Expand ~ to home directory
-  const expandedDir = dir.startsWith('~') ? dir.replace('~', homedir()) : dir;
-  const resolvedDir = resolve(expandedDir);
+export function ensureParentWorkspace(dir: string): void {
+  const resolvedDir = resolve(expandPath(dir));
 
   // Create directory if needed
   if (!existsSync(resolvedDir)) {
     mkdirSync(resolvedDir, { recursive: true });
-    console.log(`Created session directory: ${resolvedDir}`);
+    console.log(`Created parent session directory: ${resolvedDir}`);
   }
 
   // Create .claude directory
@@ -47,13 +76,80 @@ export function ensureSessionWorkspace(dir: string): void {
     mkdirSync(claudeDir, { recursive: true });
   }
 
-  // Create CLAUDE.md only if it doesn't exist (preserve user edits)
+  // Create parent CLAUDE.md (Discord formatting rules - inherited by all channels)
   const claudeMdPath = join(claudeDir, 'CLAUDE.md');
   if (!existsSync(claudeMdPath)) {
-    writeFileSync(claudeMdPath, getSessionTemplate(), 'utf-8');
+    writeFileSync(claudeMdPath, getParentTemplate(), 'utf-8');
     console.log(`Created Discord formatting guide: ${claudeMdPath}`);
   }
+
+  // Create parent skills directory
+  const skillsDir = join(resolvedDir, 'skills');
+  if (!existsSync(skillsDir)) {
+    mkdirSync(skillsDir, { recursive: true });
+  }
 }
+
+/**
+ * Ensure a channel workspace directory exists with channel-specific CLAUDE.md
+ * Creates the channel subdirectory under the parent sessions directory.
+ * Returns the full path to the channel directory.
+ */
+export function ensureChannelWorkspace(parentDir: string, channelName: string): string {
+  // Validate channel name to prevent path traversal
+  if (!channelName || channelName.includes('/') || channelName.includes('\\') ||
+      channelName === '..' || channelName === '.' || channelName.startsWith('.')) {
+    throw new Error(`Invalid channel name: ${channelName}`);
+  }
+
+  const resolvedParent = resolve(expandPath(parentDir));
+  const channelDir = join(resolvedParent, channelName);
+
+  // Ensure parent workspace exists first
+  ensureParentWorkspace(parentDir);
+
+  // Create channel directory
+  if (!existsSync(channelDir)) {
+    mkdirSync(channelDir, { recursive: true });
+    console.log(`Created channel directory: ${channelDir}`);
+  }
+
+  // Create channel .claude directory
+  const claudeDir = join(channelDir, '.claude');
+  if (!existsSync(claudeDir)) {
+    mkdirSync(claudeDir, { recursive: true });
+  }
+
+  // Create channel CLAUDE.md (meta-aware template)
+  const claudeMdPath = join(claudeDir, 'CLAUDE.md');
+  if (!existsSync(claudeMdPath)) {
+    writeFileSync(claudeMdPath, getChannelTemplate(channelName, channelDir, resolvedParent), 'utf-8');
+    console.log(`Created channel guide: ${claudeMdPath}`);
+  }
+
+  // Create channel skills directory
+  const skillsDir = join(channelDir, 'skills');
+  if (!existsSync(skillsDir)) {
+    mkdirSync(skillsDir, { recursive: true });
+  }
+
+  return channelDir;
+}
+
+/**
+ * Delete a channel workspace directory and all its contents
+ * Called when a Discord channel is deleted.
+ */
+export function deleteChannelWorkspace(parentDir: string, channelName: string): void {
+  const resolvedParent = resolve(expandPath(parentDir));
+  const channelDir = join(resolvedParent, channelName);
+
+  if (existsSync(channelDir)) {
+    rmSync(channelDir, { recursive: true, force: true });
+    console.log(`Deleted channel workspace: ${channelDir}`);
+  }
+}
+
 
 // Allowed base paths for sessions (set via config)
 let allowedPaths: string[] = [];
@@ -129,34 +225,32 @@ class SessionManager {
   /**
    * Create a new Claude Code session in tmux
    * Session name is derived from guildId + channelId (convention-based)
+   * Creates a channel subdirectory under the base directory.
    */
   async createSession(
     guildId: string,
     channelId: string,
-    directory: string
+    channelName: string,
+    baseDirectory: string
   ): Promise<SessionInfo> {
     const sessionId = makeSessionId(guildId, channelId);
     const tmuxName = this.getTmuxName(sessionId);
 
-    // Expand ~ to home directory, then resolve
-    const expandedDir = directory.startsWith('~')
-      ? directory.replace('~', homedir())
-      : directory;
-    const resolvedDir = resolve(expandedDir);
+    // Expand and resolve the base directory
+    const resolvedBase = resolve(expandPath(baseDirectory));
 
-    // Security: Check if path is in allowed directories
-    if (!isPathAllowed(resolvedDir)) {
-      throw new Error(`Directory not in allowed paths: ${resolvedDir}`);
-    }
-
-    if (!existsSync(resolvedDir)) {
-      throw new Error(`Directory does not exist: ${resolvedDir}`);
+    // Security: Check if base path is in allowed directories
+    if (!isPathAllowed(resolvedBase)) {
+      throw new Error(`Directory not in allowed paths: ${resolvedBase}`);
     }
 
     // Check if session already exists
     if (this.sessionExists(sessionId)) {
       throw new Error(`Session for this channel already exists`);
     }
+
+    // Create the channel workspace (subdirectory with CLAUDE.md and skills/)
+    const channelDir = ensureChannelWorkspace(baseDirectory, channelName);
 
     try {
       // Create a new tmux session running claude
@@ -166,7 +260,7 @@ class SessionManager {
         'new-session', '-d',
         '-x', '200', '-y', '50',
         '-s', tmuxName,
-        '-c', resolvedDir,
+        '-c', channelDir,
         'claude', '--dangerously-skip-permissions'
       ], { stdio: 'pipe' });
 
@@ -176,7 +270,7 @@ class SessionManager {
 
       return {
         id: sessionId,
-        directory: resolvedDir,
+        directory: channelDir,
         tmuxName,
         guildId,
         channelId,

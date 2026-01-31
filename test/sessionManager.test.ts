@@ -95,24 +95,28 @@ describe('SessionManager', () => {
         .mockImplementationOnce(() => { throw new Error('no session'); }); // sessionExists check
       vi.mocked(spawnSync).mockReturnValueOnce({ status: 0 } as any); // tmux new-session
 
-      const result = await sessionManager.createSession('guild123', 'channel456', '/tmp');
+      const result = await sessionManager.createSession('guild123', 'channel456', 'test-channel', '/tmp');
 
       expect(result).toMatchObject({
         id: 'guild123_channel456',
         tmuxName: 'disco_guild123_channel456',
-        directory: '/tmp',
+        directory: '/tmp/test-channel',
         guildId: 'guild123',
         channelId: 'channel456',
         attachCommand: 'tmux attach -t disco_guild123_channel456',
       });
     });
 
-    it('should throw if directory does not exist', async () => {
+    it('should create directory if it does not exist', async () => {
+      // existsSync returns false for initial checks, directories get created
       vi.mocked(existsSync).mockReturnValue(false);
+      vi.mocked(execSync).mockImplementationOnce(() => { throw new Error('no session'); }); // sessionExists check
+      vi.mocked(spawnSync).mockReturnValueOnce({ status: 0 } as any); // tmux new-session
 
-      await expect(
-        sessionManager.createSession('guild', 'channel', '/nonexistent')
-      ).rejects.toThrow('Directory does not exist');
+      const result = await sessionManager.createSession('guild', 'channel', 'test-channel', '/nonexistent');
+
+      // Directories are created automatically now
+      expect(result.directory).toBe('/nonexistent/test-channel');
     });
 
     it('should throw if session already exists', async () => {
@@ -120,7 +124,7 @@ describe('SessionManager', () => {
       vi.mocked(execSync).mockReturnValueOnce(Buffer.from('')); // sessionExists returns true
 
       await expect(
-        sessionManager.createSession('guild', 'channel', '/tmp')
+        sessionManager.createSession('guild', 'channel', 'test-channel', '/tmp')
       ).rejects.toThrow('already exists');
     });
 
@@ -130,10 +134,10 @@ describe('SessionManager', () => {
         .mockImplementationOnce(() => { throw new Error('no session'); }); // sessionExists check
       vi.mocked(spawnSync).mockReturnValueOnce({ status: 0 } as any); // tmux new-session
 
-      const result = await sessionManager.createSession('guild', 'channel', '~/projects');
+      const result = await sessionManager.createSession('guild', 'channel', 'test-channel', '~/projects');
 
       expect(result.directory).not.toContain('~');
-      expect(result.directory).toMatch(/^\/.*projects$/);
+      expect(result.directory).toMatch(/^\/.*projects\/test-channel$/);
     });
   });
 
@@ -332,8 +336,8 @@ describe('SessionManager', () => {
       vi.mocked(execSync).mockImplementationOnce(() => { throw new Error('no session'); });
       vi.mocked(spawnSync).mockReturnValueOnce({ status: 0 } as any);
 
-      const result = await sessionManager.createSession('guild', 'channel', '/any/path');
-      expect(result.directory).toBe('/any/path');
+      const result = await sessionManager.createSession('guild', 'channel', 'test-channel', '/any/path');
+      expect(result.directory).toBe('/any/path/test-channel');
     });
 
     it('should reject paths outside allowed directories', async () => {
@@ -341,7 +345,7 @@ describe('SessionManager', () => {
       vi.mocked(existsSync).mockReturnValue(true);
 
       await expect(
-        sessionManager.createSession('guild', 'channel', '/etc/passwd')
+        sessionManager.createSession('guild', 'channel', 'test-channel', '/etc/passwd')
       ).rejects.toThrow('Directory not in allowed paths');
     });
 
@@ -351,8 +355,8 @@ describe('SessionManager', () => {
       vi.mocked(execSync).mockImplementationOnce(() => { throw new Error('no session'); });
       vi.mocked(spawnSync).mockReturnValueOnce({ status: 0 } as any);
 
-      const result = await sessionManager.createSession('guild', 'channel', '/home/user/projects/myapp');
-      expect(result.directory).toBe('/home/user/projects/myapp');
+      const result = await sessionManager.createSession('guild', 'channel', 'test-channel', '/home/user/projects/myapp');
+      expect(result.directory).toBe('/home/user/projects/myapp/test-channel');
     });
 
     it('should allow exact match of allowed directory', async () => {
@@ -361,8 +365,8 @@ describe('SessionManager', () => {
       vi.mocked(execSync).mockImplementationOnce(() => { throw new Error('no session'); });
       vi.mocked(spawnSync).mockReturnValueOnce({ status: 0 } as any);
 
-      const result = await sessionManager.createSession('guild', 'channel', '/home/user/projects');
-      expect(result.directory).toBe('/home/user/projects');
+      const result = await sessionManager.createSession('guild', 'channel', 'test-channel', '/home/user/projects');
+      expect(result.directory).toBe('/home/user/projects/test-channel');
     });
 
     it('should reject path that starts with allowed path but is not a subdirectory', async () => {
@@ -370,7 +374,7 @@ describe('SessionManager', () => {
       vi.mocked(existsSync).mockReturnValue(true);
 
       await expect(
-        sessionManager.createSession('guild', 'channel', '/home/user/projects-evil')
+        sessionManager.createSession('guild', 'channel', 'test-channel', '/home/user/projects-evil')
       ).rejects.toThrow('Directory not in allowed paths');
     });
 
@@ -380,11 +384,11 @@ describe('SessionManager', () => {
       vi.mocked(execSync).mockImplementation(() => { throw new Error('no session'); });
       vi.mocked(spawnSync).mockReturnValue({ status: 0 } as any);
 
-      const result1 = await sessionManager.createSession('guild1', 'chan1', '/home/user/projects/app1');
-      expect(result1.directory).toBe('/home/user/projects/app1');
+      const result1 = await sessionManager.createSession('guild1', 'chan1', 'app1', '/home/user/projects/app1');
+      expect(result1.directory).toBe('/home/user/projects/app1/app1');
 
-      const result2 = await sessionManager.createSession('guild2', 'chan2', '/var/www/site');
-      expect(result2.directory).toBe('/var/www/site');
+      const result2 = await sessionManager.createSession('guild2', 'chan2', 'site', '/var/www/site');
+      expect(result2.directory).toBe('/var/www/site/site');
     });
   });
 
@@ -395,16 +399,17 @@ describe('SessionManager', () => {
       vi.mocked(execSync).mockImplementationOnce(() => { throw new Error('no session'); });
       vi.mocked(spawnSync).mockReturnValueOnce({ status: 0 } as any);
 
-      await sessionManager.createSession('guild', 'channel', '/tmp/test');
+      await sessionManager.createSession('guild', 'channel', 'test-channel', '/tmp/test');
 
       // Verify spawnSync was called with separate arguments (safe)
+      // Directory should be the channel subdirectory
       expect(spawnSync).toHaveBeenCalledWith(
         'tmux',
         expect.arrayContaining([
           'new-session', '-d',
           '-x', '200', '-y', '50',
           '-s', 'disco_guild_channel',
-          '-c', '/tmp/test',
+          '-c', '/tmp/test/test-channel',
           'claude', '--dangerously-skip-permissions'
         ]),
         expect.any(Object)
@@ -418,12 +423,13 @@ describe('SessionManager', () => {
       vi.mocked(spawnSync).mockReturnValueOnce({ status: 0 } as any);
 
       const maliciousPath = '/tmp/$(whoami)';
-      await sessionManager.createSession('guild', 'channel', maliciousPath);
+      await sessionManager.createSession('guild', 'channel', 'test-channel', maliciousPath);
 
       // With spawnSync argument array, the path is passed as a single argument
+      // Directory will be the channel subdirectory under the malicious path
       expect(spawnSync).toHaveBeenCalledWith(
         'tmux',
-        expect.arrayContaining(['-c', maliciousPath]),
+        expect.arrayContaining(['-c', `${maliciousPath}/test-channel`]),
         expect.any(Object)
       );
     });

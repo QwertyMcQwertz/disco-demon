@@ -1,11 +1,13 @@
-# Discord Bot Session
+# Disco Demon - Discord Environment
 
 <!--
-  This template is copied to .claude/CLAUDE.md in each new session.
-  Claude reads it to understand the Discord environment.
+  This template lives at ~/.discod/sessions/.claude/CLAUDE.md
+  It's inherited by ALL disco-demon channels.
 
-  HTML comments like this are stripped before copying - they're just
-  for documenting the template. Edit freely to customize all sessions.
+  Contains ONLY Discord formatting rules - no channel-specific content.
+  Edit this to change behavior across all channels.
+
+  HTML comments are stripped before copying.
 -->
 
 Your output is being relayed to Discord. Follow these formatting rules.

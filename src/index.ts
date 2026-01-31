@@ -17,8 +17,19 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
-import { join } from 'path';
-import sessionManager, { setAllowedPaths, ensureSessionWorkspace } from './sessionManager.js';
+import { join, dirname, basename } from 'path';
+import sessionManager, { setAllowedPaths, ensureParentWorkspace, deleteChannelWorkspace } from './sessionManager.js';
+import {
+  getSkillsDirectory,
+  searchClawHub,
+  downloadFromClawHub,
+  downloadFromGitHub,
+  installSkill,
+  listSkills,
+  removeSkill,
+  checkSkillSecurity,
+  type SkillScope,
+} from './skillManager.js';
 import config from './config.js';
 import { parseClaudeOutput, formatForDiscord } from './utils.js';
 
@@ -36,7 +47,7 @@ async function downloadAttachment(url: string, destPath: string): Promise<void> 
 setAllowedPaths(config.allowedPaths);
 
 // Ensure default session directory exists with CLAUDE.md
-ensureSessionWorkspace(config.defaultDirectory);
+ensureParentWorkspace(config.defaultDirectory);
 
 const client = new Client({
   intents: [
@@ -132,6 +143,44 @@ const sessionStats = new Map<string, SessionStats>();
 
 // Rate limiting: track last message time per user
 const userLastMessage = new Map<string, number>();
+
+// Pending skill installation requests from Claude
+// Pending skill requests from Claude (agent self-install)
+interface PendingSkillRequest {
+  source: string;
+  sourceType: 'clawhub' | 'github';
+  scope: SkillScope;
+  requestTime: Date;
+  channelId: string;
+  guildId: string;
+}
+const pendingSkillRequests = new Map<string, PendingSkillRequest>(); // keyed by channelId
+
+// Pending skill installations awaiting user confirmation (for warnings)
+interface PendingSkillInstall {
+  skillName: string;       // Name to install under (from manifest)
+  confirmName: string;     // What user must type to confirm (slug they used)
+  download: { content: string; manifest: { name: string; description: string } | null };
+  scope: SkillScope;
+  warnings: string[];
+  requestTime: Date;
+  channelId: string;
+}
+const pendingSkillInstalls = new Map<string, PendingSkillInstall>(); // keyed by channelId
+
+// Pending scope selection (when --scope not provided)
+interface PendingScopeSelect {
+  skillName: string;       // Name to install under
+  confirmName: string;     // Slug for warning confirmation
+  download: { content: string; manifest: { name: string; description: string } | null };
+  warnings: string[];
+  requestTime: Date;
+  channelId: string;
+}
+const pendingScopeSelects = new Map<string, PendingScopeSelect>(); // keyed by channelId
+
+// Pattern to detect skill installation requests in Claude's output
+const SKILL_REQUEST_PATTERN = /\[SKILL_REQUEST:\s*source="([^"]+)"\s*scope="([^"]+)"\]/g;
 
 function getOrCreateStats(sessionId: string): SessionStats {
   let stats = sessionStats.get(sessionId);
@@ -239,6 +288,88 @@ const commands = [
     )
     .addSubcommand((sub) =>
       sub.setName('stop').setDescription('Stop Claude (send ESC key)')
+    )
+    // ClawHub skill management
+    .addSubcommandGroup((group) =>
+      group
+        .setName('clawhub')
+        .setDescription('Manage skills from ClawHub')
+        .addSubcommand((sub) =>
+          sub
+            .setName('add')
+            .setDescription('Install a skill from ClawHub')
+            .addStringOption((opt) =>
+              opt.setName('slug').setDescription('ClawHub skill slug').setRequired(true)
+            )
+            .addStringOption((opt) =>
+              opt
+                .setName('scope')
+                .setDescription('Install scope')
+                .setRequired(false)
+                .addChoices(
+                  { name: 'channel', value: 'channel' },
+                  { name: 'disco', value: 'disco' },
+                  { name: 'global', value: 'global' }
+                )
+            )
+        )
+        .addSubcommand((sub) =>
+          sub
+            .setName('search')
+            .setDescription('Search for skills on ClawHub')
+            .addStringOption((opt) =>
+              opt.setName('query').setDescription('Search query').setRequired(true)
+            )
+        )
+    )
+    // General skill management
+    .addSubcommandGroup((group) =>
+      group
+        .setName('skill')
+        .setDescription('Manage installed skills')
+        .addSubcommand((sub) =>
+          sub
+            .setName('add')
+            .setDescription('Install a skill from GitHub or URL')
+            .addStringOption((opt) =>
+              opt.setName('source').setDescription('user/repo, user/repo/path, or full URL').setRequired(true)
+            )
+            .addStringOption((opt) =>
+              opt
+                .setName('scope')
+                .setDescription('Install scope')
+                .setRequired(false)
+                .addChoices(
+                  { name: 'channel', value: 'channel' },
+                  { name: 'disco', value: 'disco' },
+                  { name: 'global', value: 'global' }
+                )
+            )
+        )
+        .addSubcommand((sub) =>
+          sub
+            .setName('list')
+            .setDescription('List all installed skills')
+        )
+        .addSubcommand((sub) =>
+          sub
+            .setName('remove')
+            .setDescription('Remove an installed skill')
+            .addStringOption((opt) =>
+              opt.setName('name').setDescription('Skill name').setRequired(true)
+            )
+            .addStringOption((opt) =>
+              opt
+                .setName('scope')
+                .setDescription('Scope to remove from')
+                .setRequired(false)
+                .addChoices(
+                  { name: 'channel', value: 'channel' },
+                  { name: 'disco', value: 'disco' },
+                  { name: 'global', value: 'global' }
+                )
+            )
+        )
     ),
 ].map((cmd) => cmd.toJSON());
 
@@ -601,6 +732,47 @@ function startOutputPoller(sessionId: string, channel: TextChannel): void {
         }
       }
 
+      // Detect skill installation requests from Claude
+      SKILL_REQUEST_PATTERN.lastIndex = 0; // Reset regex state
+      const skillMatches = outputForCompare.matchAll(SKILL_REQUEST_PATTERN);
+      for (const match of skillMatches) {
+        const source = match[1];
+        const scope = match[2] as SkillScope;
+
+        // Determine source type
+        const sourceType = source.startsWith('clawhub:') ? 'clawhub' : 'github';
+        const cleanSource = source.replace(/^clawhub:/, '');
+
+        // Check if we already have a pending request for this channel
+        if (!pendingSkillRequests.has(channel.id)) {
+          pendingSkillRequests.set(channel.id, {
+            source: cleanSource,
+            sourceType,
+            scope,
+            requestTime: new Date(),
+            channelId: channel.id,
+            guildId: channel.guildId,
+          });
+
+          // Notify user about the skill request
+          await channel.send({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle('🔧 Skill Installation Request')
+                .setColor(0xf59e0b)
+                .setDescription(`Claude is requesting to install a skill.`)
+                .addFields(
+                  { name: 'Source', value: `\`${source}\``, inline: true },
+                  { name: 'Scope', value: scope, inline: true }
+                )
+                .setFooter({ text: 'Type "confirm" to approve or "cancel" to deny.' }),
+            ],
+          });
+
+          botLog('info', `🔧 **${sessionId}**: Skill request - ${source} (${scope})`);
+        }
+      }
+
       // Use the formatted content directly (plain text for Discord)
       const fullDisplayContent = state.accumulatedResponse;
 
@@ -706,6 +878,374 @@ function stopOutputPoller(sessionId: string): void {
   }
 }
 
+// Get skill directories for current context
+function getSkillDirs(guildId: string, channelId: string): { channelDir: string; parentDir: string } | null {
+  const session = sessionManager.getSessionForChannel(guildId, channelId);
+  if (!session) return null;
+
+  return {
+    channelDir: session.directory,
+    parentDir: config.defaultDirectory,
+  };
+}
+
+// Handle skill-related subcommand groups
+async function handleSkillCommands(
+  interaction: import('discord.js').ChatInputCommandInteraction,
+  group: string,
+  subcommand: string
+): Promise<void> {
+  if (group === 'clawhub') {
+    switch (subcommand) {
+      case 'search': {
+        const query = interaction.options.getString('query', true);
+        await interaction.deferReply();
+
+        const results = await searchClawHub(query);
+
+        if (results.length === 0) {
+          await interaction.editReply('No skills found matching your query.');
+          return;
+        }
+
+        const embed = new EmbedBuilder()
+          .setTitle(`ClawHub Search: "${query}"`)
+          .setColor(0x7c3aed)
+          .setDescription(
+            results
+              .slice(0, 10)
+              .map((r) => `**${r.slug}** - ${r.description || 'No description'}`)
+              .join('\n\n')
+          )
+          .setFooter({ text: `${results.length} result(s) found` });
+
+        await interaction.editReply({ embeds: [embed] });
+        break;
+      }
+
+      case 'add': {
+        const slug = interaction.options.getString('slug', true);
+        const scopeOption = interaction.options.getString('scope') as SkillScope | null;
+
+        await interaction.deferReply();
+
+        // Download from ClawHub
+        const download = await downloadFromClawHub(slug);
+        if (!download) {
+          await interaction.editReply(`Could not find skill "${slug}" on ClawHub.`);
+          return;
+        }
+
+        const confirmName = slug;
+        const installName = download.manifest?.name || slug;
+        const securityCheck = checkSkillSecurity(download.content);
+
+        // If no scope provided, prompt for it
+        if (!scopeOption) {
+          pendingScopeSelects.set(interaction.channelId, {
+            skillName: installName,
+            confirmName,
+            download,
+            warnings: securityCheck.warnings,
+            requestTime: new Date(),
+            channelId: interaction.channelId,
+          });
+
+          const embed = new EmbedBuilder()
+            .setTitle(`Install "${installName}"`)
+            .setColor(0x7c3aed)
+            .setDescription(`Where should this skill be installed?\n\n**1** - This channel only\n**2** - All Disco Demon channels\n**3** - Global (all Claude sessions)\n\nReply with **1**, **2**, or **3**.`);
+
+          if (download.manifest?.description) {
+            embed.addFields({ name: 'Description', value: download.manifest.description, inline: false });
+          }
+
+          await interaction.editReply({ embeds: [embed] });
+          return;
+        }
+
+        // Scope provided - proceed with install (with warning check if needed)
+        if (securityCheck.warnings.length > 0) {
+          pendingSkillInstalls.set(interaction.channelId, {
+            skillName: installName,
+            confirmName,
+            download,
+            scope: scopeOption,
+            warnings: securityCheck.warnings,
+            requestTime: new Date(),
+            channelId: interaction.channelId,
+          });
+
+          const embed = new EmbedBuilder()
+            .setTitle('⚠️ Security Warnings Detected')
+            .setColor(0xf59e0b)
+            .setDescription(`Skill **${installName}** has potential security concerns.\n\nReview the warnings below, then type \`${confirmName}\` to install or anything else to cancel.`)
+            .addFields(
+              { name: 'Scope', value: scopeOption, inline: true },
+              { name: 'Warnings', value: securityCheck.warnings.map(w => `• ${w}`).join('\n').slice(0, 1024), inline: false }
+            );
+
+          if (securityCheck.warnings.join('\n').length > 1024) {
+            embed.addFields({ name: '...', value: `Plus ${securityCheck.warnings.length - 3} more warnings`, inline: false });
+          }
+
+          await interaction.editReply({ embeds: [embed] });
+          return;
+        }
+
+        // No warnings, scope provided - install directly
+        await installSkillWithScope(interaction, download, installName, scopeOption, []);
+        break;
+      }
+    }
+  } else if (group === 'skill') {
+    switch (subcommand) {
+      case 'add': {
+        const source = interaction.options.getString('source', true);
+        const scopeOption = interaction.options.getString('scope') as SkillScope | null;
+
+        await interaction.deferReply();
+
+        // Download from GitHub
+        const download = await downloadFromGitHub(source);
+        if (!download) {
+          await interaction.editReply(`Could not download skill from "${source}". Make sure the repo exists and contains a SKILL.md file.`);
+          return;
+        }
+
+        const confirmName = source.split('/').pop() || source;
+        const installName = download.manifest?.name || confirmName;
+        const securityCheck = checkSkillSecurity(download.content);
+
+        // If no scope provided, prompt for it
+        if (!scopeOption) {
+          pendingScopeSelects.set(interaction.channelId, {
+            skillName: installName,
+            confirmName,
+            download,
+            warnings: securityCheck.warnings,
+            requestTime: new Date(),
+            channelId: interaction.channelId,
+          });
+
+          const embed = new EmbedBuilder()
+            .setTitle(`Install "${installName}"`)
+            .setColor(0x7c3aed)
+            .setDescription(`Where should this skill be installed?\n\n**1** - This channel only\n**2** - All Disco Demon channels\n**3** - Global (all Claude sessions)\n\nReply with **1**, **2**, or **3**.`);
+
+          if (download.manifest?.description) {
+            embed.addFields({ name: 'Description', value: download.manifest.description, inline: false });
+          }
+
+          await interaction.editReply({ embeds: [embed] });
+          return;
+        }
+
+        // Scope provided - proceed with install (with warning check if needed)
+        if (securityCheck.warnings.length > 0) {
+          pendingSkillInstalls.set(interaction.channelId, {
+            skillName: installName,
+            confirmName,
+            download,
+            scope: scopeOption,
+            warnings: securityCheck.warnings,
+            requestTime: new Date(),
+            channelId: interaction.channelId,
+          });
+
+          const embed = new EmbedBuilder()
+            .setTitle('⚠️ Security Warnings Detected')
+            .setColor(0xf59e0b)
+            .setDescription(`Skill **${installName}** has potential security concerns.\n\nReview the warnings below, then type \`${confirmName}\` to install or anything else to cancel.`)
+            .addFields(
+              { name: 'Scope', value: scopeOption, inline: true },
+              { name: 'Warnings', value: securityCheck.warnings.map(w => `• ${w}`).join('\n').slice(0, 1024), inline: false }
+            );
+
+          if (securityCheck.warnings.join('\n').length > 1024) {
+            embed.addFields({ name: '...', value: `Plus ${securityCheck.warnings.length - 3} more warnings`, inline: false });
+          }
+
+          await interaction.editReply({ embeds: [embed] });
+          return;
+        }
+
+        // No warnings, scope provided - install directly
+        await installSkillWithScope(interaction, download, installName, scopeOption, []);
+        break;
+      }
+
+      case 'list': {
+        const dirs = getSkillDirs(interaction.guildId!, interaction.channelId);
+
+        const allSkills: Array<{ skill: ReturnType<typeof listSkills>[0]; scope: string }> = [];
+
+        // Channel skills (if in a session)
+        if (dirs) {
+          const channelSkillsDir = getSkillsDirectory('channel', dirs.channelDir, dirs.parentDir);
+          const channelSkills = listSkills(channelSkillsDir);
+          allSkills.push(...channelSkills.map((s) => ({ skill: s, scope: 'channel' })));
+        }
+
+        // Disco skills
+        const discoSkillsDir = getSkillsDirectory('disco', '', config.defaultDirectory);
+        const discoSkills = listSkills(discoSkillsDir);
+        allSkills.push(...discoSkills.map((s) => ({ skill: s, scope: 'disco' })));
+
+        // Global skills
+        const globalSkillsDir = getSkillsDirectory('global', '', '');
+        const globalSkills = listSkills(globalSkillsDir);
+        allSkills.push(...globalSkills.map((s) => ({ skill: s, scope: 'global' })));
+
+        if (allSkills.length === 0) {
+          await interaction.reply('No skills installed.');
+          return;
+        }
+
+        const embed = new EmbedBuilder()
+          .setTitle('Installed Skills')
+          .setColor(0x7c3aed)
+          .setDescription(
+            allSkills
+              .map((s) => `**${s.skill.name}** (${s.scope})\n${s.skill.description}`)
+              .join('\n\n')
+          );
+
+        await interaction.reply({ embeds: [embed] });
+        break;
+      }
+
+      case 'remove': {
+        const name = interaction.options.getString('name', true);
+        const scopeOption = interaction.options.getString('scope') as SkillScope | null;
+
+        const dirs = getSkillDirs(interaction.guildId!, interaction.channelId);
+
+        // If scope specified, remove from that scope only
+        if (scopeOption) {
+          let skillsDir: string;
+          if (scopeOption === 'channel') {
+            if (!dirs) {
+              await interaction.reply({
+                content: 'This channel is not linked to a session.',
+                ephemeral: true,
+              });
+              return;
+            }
+            skillsDir = getSkillsDirectory('channel', dirs.channelDir, dirs.parentDir);
+          } else if (scopeOption === 'disco') {
+            skillsDir = getSkillsDirectory('disco', '', config.defaultDirectory);
+          } else {
+            skillsDir = getSkillsDirectory('global', '', '');
+          }
+
+          const removed = removeSkill(name, skillsDir);
+          if (removed) {
+            await interaction.reply(`Removed skill "${name}" from ${scopeOption} scope.`);
+            botLog('info', `Skill **${name}** removed from ${scopeOption} by ${interaction.user.tag}`);
+          } else {
+            await interaction.reply({
+              content: `Skill "${name}" not found in ${scopeOption} scope.`,
+              ephemeral: true,
+            });
+          }
+          break;
+        }
+
+        // No scope specified - search all scopes and remove from first found
+        const scopesToCheck: Array<{ scope: SkillScope; dir: string }> = [];
+
+        // Channel scope (if in session)
+        if (dirs) {
+          scopesToCheck.push({ scope: 'channel', dir: getSkillsDirectory('channel', dirs.channelDir, dirs.parentDir) });
+        }
+        // Disco scope
+        scopesToCheck.push({ scope: 'disco', dir: getSkillsDirectory('disco', '', config.defaultDirectory) });
+        // Global scope
+        scopesToCheck.push({ scope: 'global', dir: getSkillsDirectory('global', '', '') });
+
+        let removedFromScope: SkillScope | null = null;
+        for (const { scope, dir } of scopesToCheck) {
+          const removed = removeSkill(name, dir);
+          if (removed) {
+            removedFromScope = scope;
+            break;
+          }
+        }
+
+        if (removedFromScope) {
+          await interaction.reply(`Removed skill "${name}" from ${removedFromScope} scope.`);
+          botLog('info', `Skill **${name}** removed from ${removedFromScope} by ${interaction.user.tag}`);
+        } else {
+          const checkedScopes = scopesToCheck.map(s => s.scope).join(', ');
+          await interaction.reply({
+            content: `Skill "${name}" not found in any scope (${checkedScopes}).`,
+            ephemeral: true,
+          });
+        }
+        break;
+      }
+    }
+  }
+}
+
+// Helper to install skill at a specific scope
+async function installSkillWithScope(
+  interaction: import('discord.js').ChatInputCommandInteraction,
+  download: { content: string; manifest: { name: string; description: string } | null },
+  skillName: string,
+  scope: SkillScope,
+  warnings: string[] = []
+): Promise<void> {
+  const dirs = getSkillDirs(interaction.guildId!, interaction.channelId);
+
+  // Determine skills directory based on scope
+  let skillsDir: string;
+  if (scope === 'channel') {
+    if (!dirs) {
+      await interaction.editReply('Cannot install to channel scope - this channel is not linked to a session.');
+      return;
+    }
+    skillsDir = getSkillsDirectory('channel', dirs.channelDir, dirs.parentDir);
+  } else if (scope === 'disco') {
+    skillsDir = getSkillsDirectory('disco', '', config.defaultDirectory);
+  } else {
+    skillsDir = getSkillsDirectory('global', '', '');
+  }
+
+  const name = download.manifest?.name || skillName;
+  const installedPath = installSkill(name, download.content, skillsDir);
+
+  // Build response embed
+  const hasWarnings = warnings.length > 0;
+  const embed = new EmbedBuilder()
+    .setTitle(hasWarnings ? '⚠️ Skill Installed (with warnings)' : '✅ Skill Installed')
+    .setColor(hasWarnings ? 0xf59e0b : 0x22c55e)
+    .addFields(
+      { name: 'Name', value: name, inline: true },
+      { name: 'Scope', value: scope, inline: true },
+      { name: 'Path', value: `\`${installedPath}\``, inline: false }
+    );
+
+  if (download.manifest?.description) {
+    embed.setDescription(download.manifest.description);
+  }
+
+  // Add security warnings if any (truncate if too long)
+  if (hasWarnings) {
+    const warningsText = warnings.slice(0, 5).join('\n\n');
+    const truncated = warnings.length > 5 ? `\n\n... and ${warnings.length - 5} more` : '';
+    embed.addFields({
+      name: '⚠️ Security Warnings',
+      value: (warningsText + truncated).slice(0, 1024),
+      inline: false,
+    });
+  }
+
+  await interaction.editReply({ embeds: [embed] });
+  botLog('info', `Skill **${name}** installed to ${scope} by ${interaction.user.tag}${hasWarnings ? ' (with warnings)' : ''}`);
+}
+
 // Handle slash commands
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -717,9 +1257,16 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
+  const subcommandGroup = interaction.options.getSubcommandGroup(false);
   const subcommand = interaction.options.getSubcommand();
 
   try {
+    // Handle subcommand groups (clawhub, skill)
+    if (subcommandGroup) {
+      await handleSkillCommands(interaction, subcommandGroup, subcommand);
+      return;
+    }
+
     switch (subcommand) {
       case 'new': {
         const name = interaction.options.getString('name', true);
@@ -737,10 +1284,11 @@ client.on('interactionCreate', async (interaction) => {
           parent: category.id,
         });
 
-        // Create session - name is derived from guildId + channelId
+        // Create session - creates channel subdirectory under base directory
         const session = await sessionManager.createSession(
           interaction.guildId!,
           channel.id,
+          cleanName,
           directory
         );
 
@@ -1036,6 +1584,256 @@ client.on('messageCreate', async (message: Message) => {
     return;
   }
 
+  // Handle pending scope selection (when --scope not provided)
+  const pendingScope = pendingScopeSelects.get(message.channelId);
+  if (pendingScope) {
+    const content = message.content.trim();
+    const scopeMap: Record<string, SkillScope> = { '1': 'channel', '2': 'disco', '3': 'global' };
+    const selectedScope = scopeMap[content];
+
+    if (!selectedScope) {
+      // Invalid input - cancel
+      pendingScopeSelects.delete(message.channelId);
+      await message.reply({
+        content: '❌ Installation cancelled. (Reply with 1, 2, or 3)',
+        allowedMentions: { repliedUser: false },
+      });
+      return;
+    }
+
+    pendingScopeSelects.delete(message.channelId);
+
+    // Check for channel scope validity
+    if (selectedScope === 'channel') {
+      const session = sessionManager.getSession(sessionId);
+      if (!session) {
+        await message.reply({
+          content: '❌ Channel scope not available - this channel is not linked to a session.',
+          allowedMentions: { repliedUser: false },
+        });
+        return;
+      }
+    }
+
+    // Now check for warnings
+    if (pendingScope.warnings.length > 0) {
+      // Move to warning confirmation flow
+      pendingSkillInstalls.set(message.channelId, {
+        skillName: pendingScope.skillName,
+        confirmName: pendingScope.confirmName,
+        download: pendingScope.download,
+        scope: selectedScope,
+        warnings: pendingScope.warnings,
+        requestTime: new Date(),
+        channelId: message.channelId,
+      });
+
+      const embed = new EmbedBuilder()
+        .setTitle('⚠️ Security Warnings Detected')
+        .setColor(0xf59e0b)
+        .setDescription(`Skill **${pendingScope.skillName}** has potential security concerns.\n\nReview the warnings below, then type \`${pendingScope.confirmName}\` to install or anything else to cancel.`)
+        .addFields(
+          { name: 'Scope', value: selectedScope, inline: true },
+          { name: 'Warnings', value: pendingScope.warnings.map(w => `• ${w}`).join('\n').slice(0, 1024), inline: false }
+        );
+
+      await message.reply({
+        embeds: [embed],
+        allowedMentions: { repliedUser: false },
+      });
+      return;
+    }
+
+    // No warnings - install directly
+    try {
+      const session = sessionManager.getSession(sessionId);
+      let skillsDir: string;
+      if (selectedScope === 'channel' && session) {
+        skillsDir = getSkillsDirectory('channel', session.directory, config.defaultDirectory);
+      } else if (selectedScope === 'disco') {
+        skillsDir = getSkillsDirectory('disco', '', config.defaultDirectory);
+      } else {
+        skillsDir = getSkillsDirectory('global', '', '');
+      }
+
+      const installedPath = installSkill(pendingScope.skillName, pendingScope.download.content, skillsDir);
+
+      const embed = new EmbedBuilder()
+        .setTitle('✅ Skill Installed')
+        .setColor(0x22c55e)
+        .addFields(
+          { name: 'Name', value: pendingScope.skillName, inline: true },
+          { name: 'Scope', value: selectedScope, inline: true },
+          { name: 'Path', value: `\`${installedPath}\``, inline: false }
+        );
+
+      if (pendingScope.download.manifest?.description) {
+        embed.setDescription(pendingScope.download.manifest.description);
+      }
+
+      await message.reply({
+        embeds: [embed],
+        allowedMentions: { repliedUser: false },
+      });
+
+      botLog('info', `Skill **${pendingScope.skillName}** installed to ${selectedScope} by ${message.author.tag}`);
+    } catch (error) {
+      await message.reply({
+        content: `Failed to install skill: ${(error as Error).message}`,
+        allowedMentions: { repliedUser: false },
+      });
+    }
+    return;
+  }
+
+  // Handle pending skill install confirmation (from slash commands with warnings)
+  const pendingInstall = pendingSkillInstalls.get(message.channelId);
+  if (pendingInstall) {
+    const content = message.content.trim();
+
+    // User must type the exact confirm name (slug they used) to confirm
+    if (content === pendingInstall.confirmName) {
+      pendingSkillInstalls.delete(message.channelId);
+
+      try {
+        // Get skill directory for scope
+        const session = sessionManager.getSession(sessionId);
+        let skillsDir: string;
+        if (pendingInstall.scope === 'channel' && session) {
+          skillsDir = getSkillsDirectory('channel', session.directory, config.defaultDirectory);
+        } else if (pendingInstall.scope === 'disco') {
+          skillsDir = getSkillsDirectory('disco', '', config.defaultDirectory);
+        } else {
+          skillsDir = getSkillsDirectory('global', '', '');
+        }
+
+        const installedPath = installSkill(pendingInstall.skillName, pendingInstall.download.content, skillsDir);
+
+        const embed = new EmbedBuilder()
+          .setTitle('✅ Skill Installed')
+          .setColor(0x22c55e)
+          .addFields(
+            { name: 'Name', value: pendingInstall.skillName, inline: true },
+            { name: 'Scope', value: pendingInstall.scope, inline: true },
+            { name: 'Path', value: `\`${installedPath}\``, inline: false }
+          );
+
+        if (pendingInstall.download.manifest?.description) {
+          embed.setDescription(pendingInstall.download.manifest.description);
+        }
+
+        await message.reply({
+          embeds: [embed],
+          allowedMentions: { repliedUser: false },
+        });
+
+        botLog('info', `Skill **${pendingInstall.skillName}** installed to ${pendingInstall.scope} by ${message.author.tag} (with warnings acknowledged)`);
+      } catch (error) {
+        await message.reply({
+          content: `Failed to install skill: ${(error as Error).message}`,
+          allowedMentions: { repliedUser: false },
+        });
+      }
+      return;
+    } else {
+      // Anything else = cancel
+      pendingSkillInstalls.delete(message.channelId);
+      await message.reply({
+        content: `❌ Installation cancelled. (Expected \`${pendingInstall.confirmName}\`)`,
+        allowedMentions: { repliedUser: false },
+      });
+      return;
+    }
+  }
+
+  // Handle skill installation confirmation/cancellation (from Claude agent requests)
+  const pendingRequest = pendingSkillRequests.get(message.channelId);
+  if (pendingRequest) {
+    const content = message.content.toLowerCase().trim();
+
+    if (content === 'confirm') {
+      pendingSkillRequests.delete(message.channelId);
+
+      try {
+        // Download and install the skill
+        let download;
+        if (pendingRequest.sourceType === 'clawhub') {
+          download = await downloadFromClawHub(pendingRequest.source);
+        } else {
+          download = await downloadFromGitHub(pendingRequest.source);
+        }
+
+        if (!download) {
+          await message.reply({
+            content: `Could not download skill from "${pendingRequest.source}".`,
+            allowedMentions: { repliedUser: false },
+          });
+          return;
+        }
+
+        // Security check - warnings are informational, not blocking
+        const securityCheck = checkSkillSecurity(download.content);
+        const warnings = securityCheck.warnings;
+
+        // Get skill directory for scope
+        const session = sessionManager.getSession(sessionId);
+        let skillsDir: string;
+        if (pendingRequest.scope === 'channel' && session) {
+          skillsDir = getSkillsDirectory('channel', session.directory, config.defaultDirectory);
+        } else if (pendingRequest.scope === 'disco') {
+          skillsDir = getSkillsDirectory('disco', '', config.defaultDirectory);
+        } else {
+          skillsDir = getSkillsDirectory('global', '', '');
+        }
+
+        const skillName = download.manifest?.name || pendingRequest.source.split('/').pop() || 'unknown';
+        const installedPath = installSkill(skillName, download.content, skillsDir);
+
+        const hasWarnings = warnings.length > 0;
+        const embed = new EmbedBuilder()
+          .setTitle(hasWarnings ? '⚠️ Skill Installed (with warnings)' : '✅ Skill Installed')
+          .setColor(hasWarnings ? 0xf59e0b : 0x22c55e)
+          .addFields(
+            { name: 'Name', value: skillName, inline: true },
+            { name: 'Scope', value: pendingRequest.scope, inline: true },
+            { name: 'Path', value: `\`${installedPath}\``, inline: false }
+          );
+
+        if (hasWarnings) {
+          const warningsText = warnings.slice(0, 5).join('\n\n');
+          const truncated = warnings.length > 5 ? `\n\n... and ${warnings.length - 5} more` : '';
+          embed.addFields({
+            name: '⚠️ Security Warnings',
+            value: (warningsText + truncated).slice(0, 1024),
+            inline: false,
+          });
+        }
+
+        await message.reply({
+          embeds: [embed],
+          allowedMentions: { repliedUser: false },
+        });
+
+        botLog('info', `Skill **${skillName}** installed to ${pendingRequest.scope} (approved by ${message.author.tag})${hasWarnings ? ' (with warnings)' : ''}`);
+      } catch (error) {
+        await message.reply({
+          content: `Failed to install skill: ${(error as Error).message}`,
+          allowedMentions: { repliedUser: false },
+        });
+      }
+      return;
+    } else if (content === 'cancel') {
+      pendingSkillRequests.delete(message.channelId);
+      await message.reply({
+        content: '❌ Skill installation cancelled.',
+        allowedMentions: { repliedUser: false },
+      });
+      botLog('info', `Skill request cancelled by ${message.author.tag}`);
+      return;
+    }
+    // If not confirm/cancel, continue with normal message handling
+  }
+
   // Rate limiting check
   const now = Date.now();
   const lastTime = userLastMessage.get(message.author.id) || 0;
@@ -1110,12 +1908,24 @@ client.on('channelDelete', (channel) => {
     const textChannel = channel as TextChannel;
     const sessionId = sessionManager.getSessionIdForChannel(textChannel.guildId, textChannel.id);
     if (sessionId) {
+      // Get session info before killing (need directory for workspace deletion)
+      const session = sessionManager.getSession(sessionId);
+
       stopOutputPoller(sessionId);
       sessionStats.delete(sessionId);
+
       if (sessionManager.sessionExists(sessionId)) {
         sessionManager.killSession(sessionId).catch((e) => botLog('error', `Failed to kill session: ${e.message}`));
         botLog('info', `Session **${sessionId}** ended (channel deleted)`);
         updateBotStatus();
+      }
+
+      // Delete the channel workspace (directory, CLAUDE.md, skills, images)
+      if (session?.directory) {
+        const channelName = basename(session.directory);
+        const parentDir = dirname(session.directory);
+        deleteChannelWorkspace(parentDir, channelName);
+        botLog('info', `Deleted workspace for **${channelName}**`);
       }
     }
   }
