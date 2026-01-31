@@ -29,6 +29,17 @@ Still here? See [Locking It Down](#locking-it-down) for how to reduce the blast 
 
 ---
 
+## 🆕 New in v1.1.0
+
+**Full [ClawHub](https://clawhub.ai) compatibility!** Install skills directly from ClawHub or any GitHub repo. Claude can even request skills itself—you just approve.
+
+- `/disco clawhub add <slug>` - Install skills from ClawHub
+- `/disco skill add user/repo` - Install skills from GitHub
+- Per-channel workspaces with dedicated skills folders
+- Security scanning with line-by-line warnings
+
+---
+
 ## Features
 
 - 📺 **Channel per session** - Each Claude session gets its own Discord channel
@@ -107,7 +118,7 @@ npm start           # Production
 npm run dev         # Development (hot reload)
 ```
 
-Then in Discord: `/disco new myproject ~/code/myproject`
+Then in Discord: `/disco new myproject`
 
 ### Running as a Service
 
@@ -168,7 +179,7 @@ For native macOS service management, see Apple's [launchd documentation](https:/
 
 | Command | Description |
 |---------|-------------|
-| `/disco new <name> [directory]` | Create a new session + channel |
+| `/disco new <name> [directory]` | Create a new channel + Claude session (directory optional) |
 | `/disco list` | List all active sessions |
 | `/disco sync` | Reconnect orphaned tmux sessions |
 | `/disco end` | End the current session |
@@ -196,9 +207,15 @@ For native macOS service management, see Apple's [launchd documentation](https:/
 
 **Create a session:**
 ```
+/disco new api-server
+```
+→ Creates `#api-server` channel with a Claude session in the default directory
+
+**Create a session in a specific directory:**
+```
 /disco new api-server ~/code/my-api
 ```
-→ Creates `#api-server` channel in the "Disco Demon" category
+→ Same, but Claude works in `~/code/my-api`
 
 **In the channel, just type:**
 ```
