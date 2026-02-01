@@ -9,29 +9,15 @@ Create a channel, start typing, Claude responds.
 
 ## ⚠️ Security Warning
 
-**This is a security nightmare. Advanced users only.**
+**Anyone who can type in a session channel can run arbitrary commands on your machine.** This is raw, unsandboxed shell access through Discord. Only run this on a private server with people you trust completely.
 
-This bot gives anyone in your Discord channel the ability to execute arbitrary code on your machine. Read that again. Anyone who can type in a session channel can tell Claude to:
-
-- Run any shell command (`rm -rf /`, `curl malware.sh | bash`, whatever)
-- Read any file your user can access (SSH keys, browser cookies, env files)
-- Edit any file (inject backdoors, modify configs, corrupt data)
-- Exfiltrate data to external servers
-
-If that doesn't terrify you, you're not thinking hard enough. This is raw, unsandboxed access to your system through a chat interface.
-
-**Do not run this bot if:**
-- You share your Discord server with anyone you don't trust completely
-- You're on a machine with sensitive data
-- You don't understand what `--dangerously-skip-permissions` means
-
-Still here? See [Locking It Down](#locking-it-down) for how to reduce the blast radius.
+See [Locking It Down](#locking-it-down) to reduce the blast radius.
 
 ---
 
 ## 🆕 New in v1.1.0
 
-**Full [ClawHub](https://clawhub.ai) compatibility!** Install skills directly from ClawHub or any GitHub repo. Claude can even request skills itself—you just approve.
+**[ClawHub](https://clawhub.ai) support.** Install skills from ClawHub or any GitHub repo. Claude can request skills itself—you confirm or cancel.
 
 - `/disco clawhub add <slug>` - Install skills from ClawHub
 - `/disco skill add user/repo` - Install skills from GitHub
@@ -53,7 +39,7 @@ Still here? See [Locking It Down](#locking-it-down) for how to reduce the blast 
 - 🔗 **Auto-reconnect** - Bot finds existing sessions on startup
 - 🖥️ **Terminal access** - Drop into tmux whenever you want full control
 - 🧩 **Skill installation** - Install skills from [ClawHub](https://clawhub.ai) or GitHub
-- 🤖 **Agent self-install** - Claude can request skills, you approve with one word
+- 🤖 **Agent self-install** - Claude can request skills, you confirm or cancel
 - 📁 **Per-channel workspaces** - Each channel gets its own skills and config
 
 ## Installation
@@ -62,7 +48,7 @@ Still here? See [Locking It Down](#locking-it-down) for how to reduce the blast 
 
 - **[Node.js 18+](https://nodejs.org/en/download)**
 - **[tmux](https://github.com/tmux/tmux/wiki/Installing)**
-- **[Claude Code CLI](https://docs.anthropic.com/en/docs/disco-code)** - installed and authenticated (`claude --version`)
+- **[Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code/overview)** - installed and authenticated (`claude --version`)
 - **[Discord server](https://support.discord.com/hc/en-us/articles/204849977-How-do-I-create-a-server)** - where you have Manage Channels permission
 
 ### 1. Clone the repo
@@ -156,7 +142,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now discod
 ```
 
-**Important:** `KillMode=process` is required. Without it, systemd's default behavior (`control-group`) kills all child processes when the service restarts—including your tmux sessions. With `KillMode=process`, only the Node.js process is killed, leaving tmux sessions intact for the bot to reconnect to.
+**Important:** `KillMode=process` keeps tmux sessions alive when the service restarts. Without it, systemd kills all child processes including your sessions.
 
 #### pm2 (Cross-platform)
 
@@ -207,21 +193,21 @@ For native macOS service management, see Apple's [launchd documentation](https:/
 
 **Create a session:**
 ```
-/disco new api-server
+/disco new my-project
 ```
-→ Creates `#api-server` channel with a Claude session in the default directory
+→ Creates `#my-project` channel with a Claude session in the default directory
 
 **Create a session in a specific directory:**
 ```
-/disco new api-server ~/code/my-api
+/disco new my-project ~/code/my-project
 ```
-→ Same, but Claude works in `~/code/my-api`
+→ Same, but Claude works in `~/code/my-project`
 
 **In the channel, just type:**
 ```
-Help me add rate limiting to the /users endpoint
+What does this codebase do?
 ```
-→ Claude reads your code, makes changes, responds with what it did
+→ Claude explores the files, summarizes the project, and answers follow-up questions
 
 **Attach to the terminal:**
 ```
@@ -242,14 +228,14 @@ Help me add rate limiting to the /users endpoint
 → Clones repo, extracts SKILL.md, prompts for scope
 
 **Let Claude install skills:**
-Claude can output `[SKILL_REQUEST: source="clawhub:rlm" scope="channel"]` and you'll be prompted to confirm
+When Claude needs a skill, it requests it and you type `confirm` or `cancel`
 
 ## How It Works
 
 ```
 You (Discord)              Disco Demon                tmux + Claude
      │                          │                          │
-     │  "add rate limiting"     │                          │
+     │  "what does this do?"    │                          │
      └─────────────────────────►│  tmux send-keys ────────►│
                                 │                          │ Claude thinks...
                                 │◄──── capture-pane ───────│ Claude responds
@@ -266,11 +252,7 @@ Sessions are named `disco_{guildId}_{channelId}` - the bot finds them by queryin
 
 ## Locking It Down
 
-You're running this thing. Might as well reduce the damage when (not if) something goes wrong.
-
 ### User Whitelist (Required)
-
-Only let specific Discord users interact with sessions:
 
 ```bash
 ALLOWED_USERS=123456789012345678,987654321098765432
@@ -280,19 +262,19 @@ Get your user ID: Discord Settings → Advanced → Developer Mode → right-cli
 
 ### Path Restrictions (Recommended)
 
-Limit which directories sessions can be created in:
+Limit where sessions can be created:
 
 ```bash
 ALLOWED_PATHS=~/disco
 ```
 
-Claude can still read/write anywhere, but at least you control where sessions start.
+Note: Claude can still read/write anywhere once a session starts.
 
 ### Additional Measures
 
-- **Private server** - Don't invite randos
+- **Private server** - Keep the invite list tight
 - **2FA on Discord** - Protect your account
-- **VM/container** - Run this in isolation if possible
+- **VM/container** - Run in isolation if possible
 - **Audit `#disco-logs`** - The bot logs session creation and file edits
 
 ## Configuration Reference
@@ -301,7 +283,7 @@ Claude can still read/write anywhere, but at least you control where sessions st
 |----------|----------|---------|-------------|
 | `DISCORD_TOKEN` | Yes | - | Bot token from Developer Portal |
 | `DISCORD_CLIENT_ID` | Yes | - | Application ID from Developer Portal |
-| `DISCORD_GUILD_ID` | Yes | - | Your server ID |
+| `DISCORD_GUILD_ID` | No | - | Your server ID (recommended for faster command updates) |
 | `ALLOWED_USERS` | Yes* | - | Comma-separated user IDs (*or set `ALLOW_ALL_USERS=true`) |
 | `ALLOWED_PATHS` | No | - | Comma-separated directory paths |
 | `DEFAULT_DIRECTORY` | No | `~/.discod/sessions` | Default working directory |
