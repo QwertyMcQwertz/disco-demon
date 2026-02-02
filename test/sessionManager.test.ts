@@ -97,13 +97,14 @@ describe('SessionManager', () => {
 
       const result = await sessionManager.createSession('guild123', 'channel456', 'test-channel', '/tmp');
 
+      // New naming: disco_{last4OfGuildId}_{sanitizedChannelName}
       expect(result).toMatchObject({
         id: 'guild123_channel456',
-        tmuxName: 'disco_guild123_channel456',
+        tmuxName: 'disco_d123_test-channel',
         directory: '/tmp/test-channel',
         guildId: 'guild123',
         channelId: 'channel456',
-        attachCommand: 'tmux attach -t disco_guild123_channel456',
+        attachCommand: 'tmux attach -t disco_d123_test-channel',
       });
     });
 
@@ -403,12 +404,13 @@ describe('SessionManager', () => {
 
       // Verify spawnSync was called with separate arguments (safe)
       // Directory should be the channel subdirectory
+      // New naming: disco_{last4OfGuildId}_{sanitizedChannelName}
       expect(spawnSync).toHaveBeenCalledWith(
         'tmux',
         expect.arrayContaining([
           'new-session', '-d',
           '-x', '200', '-y', '50',
-          '-s', 'disco_guild_channel',
+          '-s', 'disco_uild_test-channel',
           '-c', '/tmp/test/test-channel',
           'claude', '--dangerously-skip-permissions'
         ]),
