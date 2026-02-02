@@ -373,6 +373,20 @@ class SessionManager {
   }
 
   /**
+   * Reverse lookup: get sessionId from tmux name using the session map
+   */
+  private getSessionIdFromTmuxNameViaMap(tmuxName: string): string | null {
+    // Search the session map for matching tmux name
+    for (const [sessionId, mappedTmuxName] of this.sessionTmuxMap.entries()) {
+      if (mappedTmuxName === tmuxName) {
+        return sessionId;
+      }
+    }
+    // Fallback to old format parsing (for backward compatibility)
+    return this.getSessionIdFromTmuxName(tmuxName);
+  }
+
+  /**
    * List all disco-demon tmux sessions
    */
   listSessions(): SessionInfo[] {
@@ -388,7 +402,8 @@ class SessionManager {
         .filter((line) => line.startsWith(SESSION_PREFIX))
         .map((line) => {
           const [name, created, path] = line.split('|');
-          const sessionId = this.getSessionIdFromTmuxName(name);
+          // Use session map for reverse lookup (supports new naming format)
+          const sessionId = this.getSessionIdFromTmuxNameViaMap(name);
           const parsed = sessionId ? parseSessionId(sessionId) : null;
           return {
             id: sessionId || name,
