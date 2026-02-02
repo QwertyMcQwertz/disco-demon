@@ -388,7 +388,7 @@ async function registerCommands(): Promise<void> {
       await rest.put(Routes.applicationGuildCommands(config.clientId, config.guildId), {
         body: commands,
       });
-      botLog('info', `Commands registered for guild ${config.guildId}`);
+      botLog('info', 'Commands registered (guild-scoped)');
     } else {
       await rest.put(Routes.applicationCommands(config.clientId), {
         body: commands,
@@ -731,7 +731,7 @@ function startOutputPoller(sessionId: string, channel: TextChannel): void {
             stats.filesEdited.push(file);
             // Log file edit to disco-logs
             const fileName = file.split('/').pop() || file;
-            botLog('info', `📝 **${sessionId}**: Edited \`${fileName}\``);
+            botLog('info', `📝 **${channel.name}**: Edited \`${fileName}\``);
           }
         }
       }
@@ -773,7 +773,7 @@ function startOutputPoller(sessionId: string, channel: TextChannel): void {
             ],
           });
 
-          botLog('info', `🔧 **${sessionId}**: Skill request - ${source} (${scope})`);
+          botLog('info', `🔧 **${channel.name}**: Skill request - ${source} (${scope})`);
         }
       }
 
@@ -1411,19 +1411,20 @@ client.on('interactionCreate', async (interaction) => {
         await sessionManager.killSession(sessionId);
         sessionStats.delete(sessionId);
 
+        const channelName = (interaction.channel as TextChannel).name;
         await interaction.editReply({
           embeds: [
             new EmbedBuilder()
               .setTitle('Session Ended')
               .setColor(0xef4444)
               .setDescription(
-                `Session \`${sessionId}\` has been terminated.\nYou can delete this channel or keep it for reference.`
+                `Session \`${channelName}\` has been terminated.\nYou can delete this channel or keep it for reference.`
               )
               .setTimestamp(),
           ],
         });
 
-        botLog('info', `Session **${sessionId}** ended by ${interaction.user.tag}`);
+        botLog('info', `Session **${channelName}** ended by ${interaction.user.tag}`);
         updateBotStatus();
         break;
       }
@@ -1993,7 +1994,7 @@ client.on('channelDelete', (channel) => {
 
       if (sessionManager.sessionExists(sessionId)) {
         sessionManager.killSession(sessionId).catch((e) => botLog('error', `Failed to kill session: ${e.message}`));
-        botLog('info', `Session **${sessionId}** ended (channel deleted)`);
+        botLog('info', `Session **${textChannel.name}** ended (channel deleted)`);
         updateBotStatus();
       }
 
@@ -2158,7 +2159,7 @@ client.once('ready', async () => {
   }
 
   const sessions = sessionManager.listSessions();
-  botLog('info', `Sessions: ${sessions.map((s) => `${s.id}${s.channelId ? '' : ' (orphaned)'}`).join(', ') || 'none'}`);
+  botLog('info', `Sessions: ${sessions.map((s) => `${s.tmuxName}${s.channelId ? '' : ' (orphaned)'}`).join(', ') || 'none'}`);
 });
 
 // Graceful shutdown

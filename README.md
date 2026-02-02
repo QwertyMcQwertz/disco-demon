@@ -15,7 +15,16 @@ See [Locking It Down](#locking-it-down) to reduce the blast radius.
 
 ---
 
-## 🆕 New in v1.1.0
+## 🆕 New in v1.2.0
+
+- **Message Batching** - Rapid messages are now combined into single Claude turns, reducing API calls and providing better context
+- **Cleaner Logs** - Logs no longer expose sensitive Discord IDs; shows friendly names like `disco_4769_testing` instead
+- **User Context** - Messages now include metadata (username, channel, timestamp) so Claude knows who's talking
+- **Simpler tmux Names** - Session names are now human-readable: `tmux attach -t disco_4769_research`
+
+---
+
+## 🧩 New in v1.1.0
 
 **[ClawHub](https://clawhub.ai) support.** Install skills from ClawHub or any GitHub repo. Claude can request skills itself—you confirm or cancel.
 
@@ -248,7 +257,7 @@ You (Discord)              Disco Demon                tmux + Claude
 3. Disco Demon polls the tmux pane for new output
 4. Output is parsed, formatted, and streamed back to Discord
 
-Sessions are named `disco_{guildId}_{channelId}` - the bot finds them by querying tmux directly (no state file needed).
+Sessions are named `disco_{last4-of-guild}_{channel-name}` - human-readable names the bot finds by querying tmux directly (no state file needed).
 
 ## Locking It Down
 
@@ -313,7 +322,7 @@ Add `KillMode=process` to your systemd service. See [Running as a Service](#runn
 
 Attach to the session and look for errors:
 ```bash
-tmux attach -t disco_<guildId>_<channelId>
+tmux attach -t disco_<last4>_<channel-name>
 ```
 Claude CLI might need re-authentication.
 
@@ -347,7 +356,7 @@ Add the directory to `ALLOWED_PATHS` in your `.env`.
 - Disco skills: `~/.discod/sessions/skills/`
 - Global skills: `~/.claude/skills/`
 
-**Session naming:** `disco_{guildId}_{channelId}` - allows stateless reconnection by querying tmux directly.
+**Session naming:** `disco_{last4-of-guild}_{channel-name}` - human-readable names allow easy `tmux attach -t disco_4769_research`.
 
 ---
 
