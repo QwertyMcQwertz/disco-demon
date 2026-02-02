@@ -15,26 +15,6 @@ See [Locking It Down](#locking-it-down) to reduce the blast radius.
 
 ---
 
-## 🆕 New in v1.2.0
-
-- **Message Batching** - Rapid messages are now combined into single Claude turns, reducing API calls and providing better context
-- **Cleaner Logs** - Logs no longer expose sensitive Discord IDs; shows friendly names like `disco_4769_testing` instead
-- **User Context** - Messages now include metadata (username, channel, timestamp) so Claude knows who's talking
-- **Simpler tmux Names** - Session names are now human-readable: `tmux attach -t disco_4769_research`
-
----
-
-## 🧩 New in v1.1.0
-
-**[ClawHub](https://clawhub.ai) support.** Install skills from ClawHub or any GitHub repo. Claude can request skills itself—you confirm or cancel.
-
-- `/disco clawhub add <slug>` - Install skills from ClawHub
-- `/disco skill add user/repo` - Install skills from GitHub
-- Per-channel workspaces with dedicated skills folders
-- Security scanning with line-by-line warnings
-
----
-
 ## Features
 
 - 📺 **Channel per session** - Each Claude session gets its own Discord channel
