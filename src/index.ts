@@ -32,6 +32,7 @@ import {
 } from './skillManager.js';
 import config from './config.js';
 import { parseClaudeOutput, formatForDiscord } from './utils.js';
+import { sanitizedLog, debugLog, setDiscordChannel } from './logger.js';
 
 // Download a file from URL to local path
 async function downloadAttachment(url: string, destPath: string): Promise<void> {
@@ -41,6 +42,22 @@ async function downloadAttachment(url: string, destPath: string): Promise<void> 
   }
   const buffer = await response.arrayBuffer();
   writeFileSync(destPath, Buffer.from(buffer));
+}
+
+/**
+ * Wrap message content with disco context metadata for Claude
+ * Provides structured information about message source
+ */
+function wrapWithContext(message: Message, content: string): string {
+  const channel = message.channel as TextChannel;
+  return `<disco_context>
+  <source>user</source>
+  <username>${message.author.username}</username>
+  <user_id>${message.author.id}</user_id>
+  <channel>${channel.name}</channel>
+  <timestamp>${new Date().toISOString()}</timestamp>
+</disco_context>
+${content}`;
 }
 
 // Initialize allowed paths from config
@@ -57,41 +74,16 @@ const client = new Client({
   ],
 });
 
-// Bot logs channel
+// Bot logs channel (managed by logger.ts)
 let logChannel: TextChannel | null = null;
-const logBuffer: string[] = [];
-let logFlushTimer: NodeJS.Timeout | null = null;
 
-// Log to both console and Discord
-function botLog(level: 'info' | 'warn' | 'error', message: string): void {
-  const timestamp = new Date().toLocaleTimeString();
-  const prefix = level === 'error' ? '❌' : level === 'warn' ? '⚠️' : 'ℹ️';
-  const formatted = `\`${timestamp}\` ${prefix} ${message}`;
+// Log to both console/Discord (sanitized) and file (debug with IDs)
+function botLog(level: 'info' | 'warn' | 'error', message: string, ids?: Record<string, string>): void {
+  // Sanitized log goes to console and Discord
+  sanitizedLog(level, message);
 
-  // Console output
-  if (level === 'error') console.error(message);
-  else if (level === 'warn') console.warn(message);
-  else console.log(message);
-
-  // Buffer for Discord (batch to avoid rate limits)
-  logBuffer.push(formatted);
-
-  // Flush after 2 seconds of inactivity
-  if (logFlushTimer) clearTimeout(logFlushTimer);
-  logFlushTimer = setTimeout(flushLogs, 2000);
-}
-
-async function flushLogs(): Promise<void> {
-  if (!logChannel || logBuffer.length === 0) return;
-
-  const messages = logBuffer.splice(0, logBuffer.length);
-  const content = messages.join('\n').slice(0, 1900); // Discord limit
-
-  try {
-    await logChannel.send(content);
-  } catch {
-    // Ignore errors sending to log channel
-  }
+  // Debug log goes to file with full IDs
+  debugLog(level, message, ids);
 }
 
 // Update bot presence/status
@@ -143,6 +135,19 @@ const sessionStats = new Map<string, SessionStats>();
 
 // Rate limiting: track last message time per user
 const userLastMessage = new Map<string, number>();
+
+// Message debouncing: batch rapid messages from same user
+interface PendingMessage {
+  messages: string[];
+  timer: NodeJS.Timeout;
+  channel: TextChannel;
+  authorId: string;
+  originalMessage: Message; // Keep reference for context wrapping
+}
+const pendingMessages = new Map<string, PendingMessage>();
+const DEBOUNCE_MS = 1500;
+const MAX_BATCH = 10;
+const MAX_WAIT_MS = 5000;
 
 // Pending skill installation requests from Claude
 // Pending skill requests from Claude (agent self-install)
@@ -1843,11 +1848,8 @@ client.on('messageCreate', async (message: Message) => {
   }
   userLastMessage.set(message.author.id, now);
 
-  try {
-    // Show typing indicator while Claude processes
-    await (message.channel as TextChannel).sendTyping();
-
-    // Build message content
+  // Process message content and images
+  const processMessageContent = async (): Promise<string> => {
     let textToSend = message.content;
 
     // Handle image attachments
@@ -1887,14 +1889,99 @@ client.on('messageCreate', async (message: Message) => {
       }
     }
 
-    // Skip if nothing to send
+    return textToSend;
+  };
+
+  // Function to send accumulated messages to Claude
+  const sendAccumulatedMessages = async (pending: PendingMessage) => {
+    try {
+      // Show typing indicator
+      await pending.channel.sendTyping();
+
+      // Combine all messages
+      const combinedText = pending.messages.join('\n');
+
+      // Skip if nothing to send
+      if (!combinedText.trim()) return;
+
+      // Wrap with disco context (using the original message for metadata)
+      const wrappedText = wrapWithContext(pending.originalMessage, combinedText);
+
+      // Mark that we're starting a new turn - response should be a new message
+      const pendingSessionId = sessionManager.getSessionIdForChannel(
+        pending.originalMessage.guildId!,
+        pending.channel.id
+      );
+      if (pendingSessionId) {
+        markUserInput(pendingSessionId, wrappedText);
+        await sessionManager.sendToSession(pendingSessionId, wrappedText);
+      }
+    } catch (error) {
+      botLog('error', `Failed to send message to session: ${(error as Error).message}`);
+      await pending.originalMessage.reply({
+        content: `Failed to send: ${(error as Error).message}`,
+        allowedMentions: { repliedUser: false },
+      });
+    }
+  };
+
+  try {
+    // Get the processed message content
+    const textToSend = await processMessageContent();
     if (!textToSend.trim()) return;
 
-    // Mark that we're starting a new turn - response should be a new message
-    markUserInput(sessionId, textToSend);
-    await sessionManager.sendToSession(sessionId, textToSend);
+    const debounceKey = `${message.channelId}_${message.author.id}`;
+    const pending = pendingMessages.get(debounceKey);
+
+    if (pending) {
+      // Add to existing pending batch
+      clearTimeout(pending.timer);
+      pending.messages.push(textToSend);
+
+      // Check if we hit max batch size
+      if (pending.messages.length >= MAX_BATCH) {
+        pendingMessages.delete(debounceKey);
+        await sendAccumulatedMessages(pending);
+        return;
+      }
+
+      // Reset timer
+      pending.timer = setTimeout(async () => {
+        pendingMessages.delete(debounceKey);
+        await sendAccumulatedMessages(pending);
+      }, DEBOUNCE_MS);
+    } else {
+      // Create new pending entry
+      const channel = message.channel as TextChannel;
+
+      // Track the start time for MAX_WAIT_MS
+      const startTime = Date.now();
+
+      const newPending: PendingMessage = {
+        messages: [textToSend],
+        timer: setTimeout(async () => {
+          pendingMessages.delete(debounceKey);
+          await sendAccumulatedMessages(newPending);
+        }, DEBOUNCE_MS),
+        channel,
+        authorId: message.author.id,
+        originalMessage: message,
+      };
+
+      pendingMessages.set(debounceKey, newPending);
+
+      // Also set a max wait timeout
+      setTimeout(async () => {
+        const stillPending = pendingMessages.get(debounceKey);
+        if (stillPending && stillPending === newPending) {
+          clearTimeout(stillPending.timer);
+          pendingMessages.delete(debounceKey);
+          await sendAccumulatedMessages(stillPending);
+        }
+      }, MAX_WAIT_MS);
+    }
   } catch (error) {
-    botLog('error', `Failed to send message to session: ${(error as Error).message}`);
+    botLog('error', `Failed to process message: ${(error as Error).message}`);
     await message.reply({
       content: `Failed to send: ${(error as Error).message}`,
       allowedMentions: { repliedUser: false },
@@ -2036,6 +2123,9 @@ client.once('ready', async () => {
         });
         botLog('info', 'Created #disco-logs channel');
       }
+
+      // Set the Discord channel in the logger module
+      setDiscordChannel(logChannel);
 
       // Set initial bot status
       updateBotStatus();

@@ -10,8 +10,16 @@ const __dirname = dirname(__filename);
 const PARENT_TEMPLATE_PATH = join(__dirname, '..', 'config', 'parent-claude.md');
 const CHANNEL_TEMPLATE_PATH = join(__dirname, '..', 'config', 'channel-claude.md');
 
-// Session prefix - tmux sessions are named disco_{guildId}_{channelId}
+// Session prefix - tmux sessions are named disco_{serverShort}_{channelName}
 const SESSION_PREFIX = 'disco_';
+
+/**
+ * Sanitize channel name for use in tmux session names
+ * Only allows lowercase alphanumeric and hyphens, max 20 chars
+ */
+export function sanitizeChannelName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 20);
+}
 
 /**
  * Expand ~ to home directory
@@ -191,9 +199,42 @@ function parseSessionId(sessionId: string): { guildId: string; channelId: string
   return { guildId: parts[0], channelId: parts[1] };
 }
 
+// Path to session mapping file (for restart survival)
+const SESSION_MAP_PATH = join(homedir(), '.discod', 'session-map.json');
+
+/**
+ * Load session ID to tmux name mapping from disk
+ */
+function loadSessionMap(): Map<string, string> {
+  try {
+    if (existsSync(SESSION_MAP_PATH)) {
+      const data = JSON.parse(readFileSync(SESSION_MAP_PATH, 'utf-8'));
+      return new Map(Object.entries(data));
+    }
+  } catch {
+    // Ignore errors, start fresh
+  }
+  return new Map();
+}
+
+/**
+ * Save session ID to tmux name mapping to disk
+ */
+function saveSessionMap(map: Map<string, string>): void {
+  const dir = dirname(SESSION_MAP_PATH);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  const data = Object.fromEntries(map);
+  writeFileSync(SESSION_MAP_PATH, JSON.stringify(data, null, 2));
+}
+
 class SessionManager {
   // Track last captured output for diff detection (keyed by sessionId)
   private lastOutput = new Map<string, string>();
+
+  // Map sessionId -> tmuxName for the new naming scheme
+  private sessionTmuxMap = loadSessionMap();
 
   /**
    * Check if tmux is installed
@@ -209,8 +250,25 @@ class SessionManager {
 
   /**
    * Get the tmux session name for a given session ID
+   * Format: disco_{last4OfGuildId}_{sanitizedChannelName}
+   * Uses cached mapping for existing sessions, generates new name if channelName provided
    */
-  getTmuxName(sessionId: string): string {
+  getTmuxName(sessionId: string, channelName?: string): string {
+    // Check cache first (for existing sessions)
+    const cached = this.sessionTmuxMap.get(sessionId);
+    if (cached) {
+      return cached;
+    }
+
+    // Generate new name if channelName provided
+    const parsed = parseSessionId(sessionId);
+    if (parsed && channelName) {
+      const serverShort = parsed.guildId.slice(-4);
+      const safeName = sanitizeChannelName(channelName);
+      return `${SESSION_PREFIX}${serverShort}_${safeName}`;
+    }
+
+    // Fallback to old format for backward compatibility
     return `${SESSION_PREFIX}${sessionId}`;
   }
 
@@ -234,7 +292,7 @@ class SessionManager {
     baseDirectory: string
   ): Promise<SessionInfo> {
     const sessionId = makeSessionId(guildId, channelId);
-    const tmuxName = this.getTmuxName(sessionId);
+    const tmuxName = this.getTmuxName(sessionId, channelName);
 
     // Expand and resolve the base directory
     const resolvedBase = resolve(expandPath(baseDirectory));
@@ -267,6 +325,10 @@ class SessionManager {
       if (result.status !== 0) {
         throw new Error(result.stderr?.toString() || 'tmux command failed');
       }
+
+      // Store the sessionId -> tmuxName mapping for lookups
+      this.sessionTmuxMap.set(sessionId, tmuxName);
+      saveSessionMap(this.sessionTmuxMap);
 
       return {
         id: sessionId,
@@ -467,6 +529,10 @@ class SessionManager {
 
       // Clean up last output tracking
       this.lastOutput.delete(sessionId);
+
+      // Remove from session map
+      this.sessionTmuxMap.delete(sessionId);
+      saveSessionMap(this.sessionTmuxMap);
 
       return true;
     } catch (error) {
